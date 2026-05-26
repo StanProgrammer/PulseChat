@@ -24,6 +24,13 @@ services:
       DATABASE_URL: postgres://chatapp:chatapp@postgres:5432/chatapp
       PORT: 4000
       ALLOWED_ORIGIN: http://localhost:4173
+      NODE_ENV: development
+      JWT_ACCESS_SECRET: docker-dev-access-secret-change-before-production
+      JWT_REFRESH_SECRET: docker-dev-refresh-secret-change-before-production
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      REFRESH_COOKIE_MAX_AGE_MS: 604800000
+      PASSWORD_SALT_ROUNDS: 12
     ports:
       - "4000:4000"
     volumes:

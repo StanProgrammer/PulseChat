@@ -1,15 +1,19 @@
 # PulseChat
 
-A mini Slack-inspired chat application built with a React frontend and a NestJS backend. The project is currently focused on the initial authentication landing experience and the app scaffold for future real-time chat features.
+A mini Slack-inspired chat application built with a React frontend and a NestJS backend. The project now includes a working authentication flow with JWT access tokens, HTTP-only refresh cookies, Prisma/PostgreSQL persistence, and a polished auth-first frontend.
 
 ## Current Status
 
-- Frontend auth landing page for login and registration
-- Smooth login/register switching with polished loading, hover, and focus states
+- Frontend auth landing page connected to backend login and registration APIs
+- Smooth login/register switching with polished loading, validation, success, and error states
 - Responsive split-screen layout inspired by modern productivity and team chat tools
 - Tailwind CSS 4 configured through the Vite plugin
-- Backend scaffold using NestJS, Prisma, PostgreSQL, and Socket.IO
-- No authentication or chat backend integration yet
+- NestJS authentication module with DTO validation and structured error handling
+- Secure password hashing with bcrypt
+- JWT access tokens plus refresh tokens stored in HTTP-only cookies
+- Role support with `USER` and `ADMIN` roles
+- Protected route handling through JWT and role guards
+- Prisma 7 PostgreSQL setup with a `User` model and future-ready message relation
 
 ## Tech Stack
 
@@ -36,6 +40,18 @@ Install dependencies from the project root:
 npm install
 ```
 
+Start PostgreSQL with Docker:
+
+```bash
+docker compose up postgres
+```
+
+Push the Prisma schema to the database:
+
+```bash
+npm --workspace backend run prisma:push
+```
+
 Start the frontend and backend together:
 
 ```bash
@@ -55,6 +71,28 @@ npm run dev:backend
 ```
 
 The frontend Vite server is configured on port `4173`.
+The backend API server is configured on port `4000`.
+
+## Authentication API
+
+Base URL:
+
+```text
+http://localhost:4000
+```
+
+Endpoints:
+
+```text
+POST /auth/register     Create a user and start a session
+POST /auth/login        Sign in and start a session
+POST /auth/refresh      Rotate refresh token and issue a new access token
+POST /auth/logout       Clear the refresh token and end the session
+GET  /auth/me           Validate an access token and return the current user
+GET  /auth/admin/check  Example admin-only protected route
+```
+
+Login and register return an `accessToken` in the JSON response and set a `refresh_token` HTTP-only cookie. The frontend stores the access token in `sessionStorage` and relies on the HTTP-only cookie for session refresh.
 
 ## Available Scripts
 
@@ -104,10 +142,12 @@ Use the example files as a starting point for local configuration:
 - `.env.example`
 - `docker-compose.yml`
 
+Local `.env` files are included for development and are ignored by git. Replace all JWT secrets before production deployment.
+
 ## Next Steps
 
-- Connect the login and registration forms to backend authentication
-- Add route handling for authenticated and guest pages
+- Add production-grade password reset and email verification
+- Add route handling for authenticated chat pages
 - Build workspace, channel, and direct message screens
 - Add Socket.IO real-time messaging
-- Persist users, workspaces, channels, and messages with Prisma/PostgreSQL
+- Persist workspaces, channels, memberships, and messages with Prisma/PostgreSQL
