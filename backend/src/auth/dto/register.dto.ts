@@ -14,6 +14,11 @@ export class RegisterDto {
   @MaxLength(72)
   password!: string;
 
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  workspaceName!: string;
+
   @IsOptional()
   @IsUrl({ require_protocol: true })
   avatar?: string;

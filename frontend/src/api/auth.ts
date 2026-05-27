@@ -17,14 +17,16 @@ function getApiMessage(errorBody: unknown, fallback: string) {
   return message || fallback;
 }
 
-async function apiRequest<T>(path: string, options: RequestInit = {}) {
+export async function apiRequest<T>(path: string, options: RequestInit = {}) {
+  const { headers, ...requestOptions } = options;
+
   const response = await fetch(`${API_URL}${path}`, {
     credentials: 'include',
+    ...requestOptions,
     headers: {
       'Content-Type': 'application/json',
-      ...options.headers
-    },
-    ...options
+      ...headers
+    }
   });
 
   const data = response.status === 204 ? null : await response.json().catch(() => null);
@@ -36,7 +38,7 @@ async function apiRequest<T>(path: string, options: RequestInit = {}) {
   return data as T;
 }
 
-function authHeaders(accessToken: string) {
+export function authHeaders(accessToken: string) {
   return {
     Authorization: `Bearer ${accessToken}`
   };

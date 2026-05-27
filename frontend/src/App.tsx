@@ -117,7 +117,7 @@ function App() {
   };
 
   if (user) {
-    return <Workspace isLoading={isLoading} onLogout={handleLogout} user={user} />;
+    return <Workspace accessToken={accessToken} isLoading={isLoading} onLogout={handleLogout} user={user} />;
   }
 
   return (

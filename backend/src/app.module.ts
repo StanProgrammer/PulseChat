@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
+import { MessagingModule } from './messaging/messaging.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SocketGateway } from './socket/socket.gateway';
 
@@ -12,7 +13,8 @@ import { SocketGateway } from './socket/socket.gateway';
       isGlobal: true
     }),
     PrismaModule,
-    AuthModule
+    AuthModule,
+    MessagingModule
   ],
   controllers: [AppController],
   providers: [AppService, SocketGateway]

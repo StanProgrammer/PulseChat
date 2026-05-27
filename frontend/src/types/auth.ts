@@ -5,6 +5,7 @@ export type User = {
   id: string;
   name: string;
   email: string;
+  workspaceName: string;
   avatar?: string | null;
   role: Role;
   createdAt: string;
@@ -23,4 +24,5 @@ export type LoginPayload = {
 
 export type RegisterPayload = LoginPayload & {
   name: string;
+  workspaceName: string;
 };

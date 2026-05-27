@@ -12,6 +12,7 @@ const userSelect = {
   id: true,
   name: true,
   email: true,
+  workspaceName: true,
   avatar: true,
   role: true,
   createdAt: true,
@@ -39,6 +40,7 @@ export class AuthService {
       data: {
         name: dto.name.trim(),
         email,
+        workspaceName: dto.workspaceName.trim(),
         password,
         avatar: dto.avatar
       }
@@ -130,6 +132,16 @@ export class AuthService {
     }
   }
 
+  verifyAccessToken(accessToken: string): JwtPayload {
+    try {
+      return this.jwtService.verify<JwtPayload>(accessToken, {
+        secret: this.configService.getOrThrow<string>('JWT_ACCESS_SECRET')
+      });
+    } catch {
+      throw new UnauthorizedException('Access token is invalid or expired.');
+    }
+  }
+
   private async createTokenPair(user: Pick<User, 'id' | 'email' | 'role'>): Promise<TokenPair> {
     const payload: JwtPayload = {
       sub: user.id,
@@ -164,6 +176,7 @@ export class AuthService {
       id: user.id,
       name: user.name,
       email: user.email,
+      workspaceName: user.workspaceName,
       avatar: user.avatar,
       role: user.role,
       createdAt: user.createdAt,

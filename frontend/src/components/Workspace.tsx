@@ -1,252 +1,359 @@
-import type { ReactNode } from 'react';
-import { User } from '../types/auth';
+import { useEffect, useRef, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
+import { io, Socket } from 'socket.io-client';
+import {
+  DirectConversation,
+  DirectMessage,
+  Teammate,
+  listDirectConversations,
+  listDirectMessages,
+  searchWorkspaceUsers,
+  startDirectConversation
+} from '../api/messaging';
+import type { User } from '../types/auth';
 import BrandLockup from './BrandLockup';
 
 type WorkspaceProps = {
   user: User;
+  accessToken: string;
   isLoading: boolean;
   onLogout: () => Promise<void>;
 };
 
-type Channel = {
-  name: string;
-  label: string;
-  description: string;
-  members: number;
-  unread?: number;
-  mention?: boolean;
-  active?: boolean;
-  muted?: boolean;
-  updated: string;
+type SocketStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
+type RealtimeMessage = DirectMessage & {
+  clientMessageId?: string;
+  status?: 'sending' | 'sent' | 'failed';
 };
 
-type DirectMessage = {
-  name: string;
-  title: string;
-  status: 'online' | 'away' | 'offline' | 'focus';
-  initials: string;
-  lastSeen: string;
-  unread?: number;
+type ServerToClientEvents = {
+  'socket:ready': (payload: { userId: string }) => void;
+  'socket:error': (payload: { message: string }) => void;
+  'message:new': (payload: { conversationId: string; message: DirectMessage; clientMessageId?: string }) => void;
+  'conversation:updated': (payload: { conversation: DirectConversation }) => void;
 };
 
-type Message = {
-  author: string;
-  role: string;
-  avatar: string;
-  time: string;
-  body: string;
-  tone?: 'normal' | 'highlight' | 'own';
-  reactions: Array<{ label: string; count: number; active?: boolean }>;
-  replies?: number;
-  attachment?: {
-    title: string;
-    meta: string;
-    status: string;
-  };
+type ClientToServerEvents = {
+  'conversation:join': (payload: { conversationId: string }, callback?: (response: SocketAck) => void) => void;
+  'conversation:leave': (payload: { conversationId: string }, callback?: (response: SocketAck) => void) => void;
+  'message:send': (
+    payload: { conversationId: string; content: string; clientMessageId: string },
+    callback?: (response: SocketAck & { messageId?: string; clientMessageId?: string }) => void
+  ) => void;
 };
 
-const channels: Channel[] = [
-  {
-    name: 'product-briefing',
-    label: 'Product briefing',
-    description: 'Launch scope, blockers, and product decisions',
-    members: 28,
-    unread: 4,
-    mention: true,
-    active: true,
-    updated: 'now'
-  },
-  {
-    name: 'design-review',
-    label: 'Design review',
-    description: 'Flows, polish passes, and UX critique',
-    members: 16,
-    unread: 2,
-    updated: '7m'
-  },
-  {
-    name: 'engineering',
-    label: 'Engineering',
-    description: 'Build updates, incidents, and architecture notes',
-    members: 42,
-    unread: 9,
-    updated: '12m'
-  },
-  {
-    name: 'customer-signal',
-    label: 'Customer signal',
-    description: 'Feedback from support, sales, and research',
-    members: 21,
-    updated: '24m'
-  },
-  {
-    name: 'go-to-market',
-    label: 'Go to market',
-    description: 'Launch calendar and enablement',
-    members: 19,
-    updated: '1h'
-  },
-  {
-    name: 'coffee-chat',
-    label: 'Coffee chat',
-    description: 'Lightweight team updates',
-    members: 54,
-    muted: true,
-    updated: '3h'
-  }
-];
+type SocketAck = {
+  ok: boolean;
+  message?: string;
+};
 
-const directMessages: DirectMessage[] = [
-  { name: 'Maya Chen', title: 'Product lead', status: 'online', initials: 'MC', lastSeen: 'typing' },
-  { name: 'Jordan Lee', title: 'Design systems', status: 'focus', initials: 'JL', unread: 2, lastSeen: 'focus mode' },
-  { name: 'Sam Rivera', title: 'Frontend engineer', status: 'online', initials: 'SR', lastSeen: 'active' },
-  { name: 'Priya Shah', title: 'Customer research', status: 'away', initials: 'PS', lastSeen: '18m ago' },
-  { name: 'Nolan Brooks', title: 'Platform', status: 'offline', initials: 'NB', lastSeen: 'yesterday' }
-];
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:4000';
 
-const navItems = [
-  { label: 'Inbox', count: 6 },
-  { label: 'Threads', count: 3 },
-  { label: 'Drafts' },
-  { label: 'Files' }
-];
-
-const upcoming = [
-  { time: '11:30', title: 'Launch readiness', people: '8 people' },
-  { time: '13:00', title: 'Design QA review', people: '5 people' },
-  { time: '15:15', title: 'Customer insight sync', people: '4 people' }
-];
-
-const activity = [
-  { user: 'Maya', action: 'pinned the beta launch checklist', time: '2m' },
-  { user: 'Jordan', action: 'resolved the onboarding copy thread', time: '11m' },
-  { user: 'Priya', action: 'shared 6 customer clips', time: '28m' },
-  { user: 'Sam', action: 'moved mobile polish to ready', time: '44m' }
-];
-
-const files = [
-  { name: 'Launch-readiness.md', meta: 'Updated 9m ago' },
-  { name: 'Mobile-QA-notes.fig', meta: 'Commented by Jordan' },
-  { name: 'Customer-quotes.csv', meta: 'Shared by Priya' }
-];
-
-function Workspace({ user, isLoading, onLogout }: WorkspaceProps) {
+function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
+  const [query, setQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Teammate[]>([]);
+  const [conversations, setConversations] = useState<DirectConversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [isStarting, setIsStarting] = useState('');
+  const [messages, setMessages] = useState<RealtimeMessage[]>([]);
+  const [messageDraft, setMessageDraft] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [socketStatus, setSocketStatus] = useState<SocketStatus>('connecting');
+  const [error, setError] = useState('');
+  const socketRef = useRef<Socket<ServerToClientEvents, ClientToServerEvents> | null>(null);
   const initials = getInitials(user.name);
-  const activeChannel = channels.find((channel) => channel.active) ?? channels[0];
-  const messages: Message[] = [
-    {
-      author: 'Maya Chen',
-      role: 'Product lead',
-      avatar: 'MC',
-      time: '9:42 AM',
-      body:
-        'Morning. I consolidated the readiness review into one checklist. The only launch risk I see is the mobile empty-state copy, and Jordan already left a cleaner direction in the thread.',
-      tone: 'highlight',
-      reactions: [
-        { label: 'Aligned', count: 7, active: true },
-        { label: 'Reading', count: 3 }
-      ],
-      replies: 6,
-      attachment: {
-        title: 'Beta launch readiness',
-        meta: '12 tasks, 3 owners, due Friday',
-        status: 'On track'
+  const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
+  const activeParticipant = activeConversation?.participant ?? null;
+
+  useEffect(() => {
+    const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(SOCKET_URL, {
+      auth: { token: accessToken },
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 8,
+      reconnectionDelay: 600
+    });
+
+    socketRef.current = socket;
+    setSocketStatus('connecting');
+
+    socket.on('connect', () => {
+      setSocketStatus('connected');
+      setError('');
+    });
+
+    socket.on('disconnect', () => {
+      setSocketStatus('disconnected');
+    });
+
+    socket.on('connect_error', (requestError) => {
+      setSocketStatus('error');
+      setError(requestError.message || 'Realtime connection failed.');
+    });
+
+    socket.on('socket:error', (payload) => {
+      setSocketStatus('error');
+      setError(payload.message);
+    });
+
+    socket.on('message:new', ({ conversationId, message, clientMessageId }) => {
+      setMessages((current) => {
+        if (conversationId !== activeConversationIdRef.current) {
+          return current;
+        }
+
+        return mergeRealtimeMessage(current, message, clientMessageId);
+      });
+    });
+
+    socket.on('conversation:updated', ({ conversation }) => {
+      setConversations((current) => upsertConversation(current, conversation));
+    });
+
+    return () => {
+      socket.removeAllListeners();
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, [accessToken]);
+
+  const activeConversationIdRef = useRef(activeConversationId);
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadConversations = async () => {
+      try {
+        const response = await listDirectConversations(accessToken);
+
+        if (isMounted) {
+          setConversations(response.conversations);
+          setActiveConversationId((current) => current || response.conversations[0]?.id || '');
+        }
+      } catch (requestError) {
+        if (isMounted) {
+          setError(requestError instanceof Error ? requestError.message : 'Unable to load direct messages.');
+        }
       }
-    },
-    {
-      author: 'Jordan Lee',
-      role: 'Design systems',
-      avatar: 'JL',
-      time: '10:08 AM',
-      body:
-        'I tightened the composer states and channel list density. The workspace feels calmer when unread urgency is reserved for mentions and the rest stays visually quiet.',
-      reactions: [
-        { label: 'Nice', count: 5 },
-        { label: 'Ship', count: 2 }
-      ],
-      replies: 3
-    },
-    {
-      author: 'Sam Rivera',
-      role: 'Frontend engineer',
-      avatar: 'SR',
-      time: '10:19 AM',
-      body:
-        'I can pick up the responsive pass after lunch. The right panel will collapse below the conversation on tablet, and the sidebar should stay compact without losing channel context.',
-      reactions: [{ label: 'Thanks', count: 4 }],
-      replies: 2
-    },
-    {
-      author: user.name,
-      role: 'You',
-      avatar: initials,
-      time: '10:31 AM',
-      body:
-        'Great. I will keep the first version focused on navigation, channel context, account controls, and a believable conversation surface. Backend hooks can slot in after the UI stabilizes.',
-      tone: 'own',
-      reactions: [{ label: 'Plan', count: 1, active: true }]
+    };
+
+    if (accessToken) {
+      loadConversations();
     }
-  ];
+
+    return () => {
+      isMounted = false;
+    };
+  }, [accessToken]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const trimmedQuery = query.trim();
+
+    if (!trimmedQuery) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await searchWorkspaceUsers(accessToken, trimmedQuery);
+
+        if (isMounted) {
+          setSearchResults(response.users);
+          setError('');
+        }
+      } catch (requestError) {
+        if (isMounted) {
+          setError(requestError instanceof Error ? requestError.message : 'Unable to search teammates.');
+          setSearchResults([]);
+        }
+      } finally {
+        if (isMounted) {
+          setIsSearching(false);
+        }
+      }
+    }, 220);
+
+    return () => {
+      isMounted = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [accessToken, query]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadMessages = async () => {
+      if (!activeConversation?.id) {
+        setMessages([]);
+        return;
+      }
+
+      try {
+        const response = await listDirectMessages(accessToken, activeConversation.id);
+
+        if (isMounted) {
+          setMessages(response.messages);
+        }
+      } catch (requestError) {
+        if (isMounted) {
+          setError(requestError instanceof Error ? requestError.message : 'Unable to load messages.');
+          setMessages([]);
+        }
+      }
+    };
+
+    loadMessages();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [accessToken, activeConversation?.id]);
+
+  useEffect(() => {
+    const socket = socketRef.current;
+
+    if (!socket || !activeConversation?.id || socketStatus !== 'connected') {
+      return;
+    }
+
+    const conversationId = activeConversation.id;
+    socket.emit('conversation:join', { conversationId }, (response) => {
+      if (!response?.ok) {
+        setError(response?.message || 'Unable to join realtime conversation.');
+      }
+    });
+
+    return () => {
+      socket.emit('conversation:leave', { conversationId });
+    };
+  }, [activeConversation?.id, socketStatus]);
+
+  const handleStartDm = async (teammate: Teammate) => {
+    setIsStarting(teammate.id);
+    setError('');
+
+    try {
+      const response = await startDirectConversation(accessToken, teammate.id);
+      setConversations((current) => upsertConversation(current, response.conversation));
+      setActiveConversationId(response.conversation.id);
+      setQuery('');
+      setSearchResults([]);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Unable to start this direct message.');
+    } finally {
+      setIsStarting('');
+    }
+  };
+
+  const handleComposerSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!activeConversation?.id || !messageDraft.trim()) {
+      return;
+    }
+
+    const content = messageDraft.trim();
+    const clientMessageId = createClientMessageId();
+    const optimisticMessage: RealtimeMessage = {
+      id: clientMessageId,
+      clientMessageId,
+      content,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sender: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+        workspaceName: user.workspaceName
+      },
+      status: 'sending'
+    };
+
+    setIsSending(true);
+    setError('');
+    setMessageDraft('');
+    setMessages((current) => [...current, optimisticMessage]);
+    setConversations((current) =>
+      upsertConversation(current, {
+        ...activeConversation,
+        lastMessage: optimisticMessage,
+        updatedAt: optimisticMessage.createdAt
+      })
+    );
+
+    const socket = socketRef.current;
+
+    if (!socket || socketStatus !== 'connected') {
+      setMessages((current) => markMessageFailed(current, clientMessageId));
+      setError('Realtime connection is offline. Reconnect before sending.');
+      setIsSending(false);
+      return;
+    }
+
+    socket.emit(
+      'message:send',
+      {
+        conversationId: activeConversation.id,
+        content,
+        clientMessageId
+      },
+      (response) => {
+        setIsSending(false);
+
+        if (!response?.ok) {
+          setMessages((current) => markMessageFailed(current, clientMessageId));
+          setError(response?.message || 'Unable to send this message.');
+        }
+      }
+    );
+  };
 
   return (
     <main className="workspace-shell min-h-screen bg-[#eef1f4] text-[#17191c]">
-      <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[304px_minmax(0,1fr)]">
+      <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="workspace-sidebar border-r border-white/10 bg-[#18242d] text-white lg:sticky lg:top-0 lg:h-screen">
           <div className="flex h-full flex-col">
             <div className="border-b border-white/10 p-4">
               <div className="flex items-center justify-between gap-3">
                 <BrandLockup inverted />
-                <button className="workspace-icon-button border-white/10 bg-white/8 text-white hover:bg-white/14" title="Create new item" type="button">
+                <button className="workspace-icon-button border-white/10 bg-white/8 text-white hover:bg-white/14" title="Start direct message" type="button">
                   +
                 </button>
               </div>
-              <div className="mt-4 rounded-2xl border border-white/10 bg-white/8 p-3 shadow-lg shadow-black/10">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-black">Northstar Team</p>
-                    <p className="mt-1 text-xs font-semibold text-white/52">28 online members</p>
-                  </div>
-                  <span className="rounded-full bg-[#2eb67d]/18 px-2 py-1 text-xs font-black text-[#7ee0af]">live</span>
-                </div>
+              <div className="mt-4 rounded-xl border border-white/10 bg-white/8 p-3 shadow-lg shadow-black/10">
+                <p className="truncate text-sm font-black">{user.workspaceName}</p>
+                <p className="mt-1 text-xs font-semibold text-white/52">Direct messages only</p>
               </div>
             </div>
 
             <div className="scrollbar-soft flex-1 overflow-y-auto px-3 py-4">
-              <nav className="grid gap-1">
-                {navItems.map((item, index) => (
-                  <button className={`workspace-nav-item ${index === 0 ? 'workspace-nav-item-active' : ''}`} key={item.label} type="button">
-                    <span className="workspace-nav-dot" />
-                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                    {item.count && <span className="sidebar-soft-badge">{item.count}</span>}
-                  </button>
-                ))}
-              </nav>
+              <label className="dm-search-field">
+                <span>Find teammate</span>
+                <input
+                  autoComplete="off"
+                  name="dm-search"
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search by name"
+                  type="search"
+                  value={query}
+                />
+              </label>
 
-              <SidebarSection action="+" title="Priority channels">
-                {channels.map((channel) => (
-                  <button className={`channel-row ${channel.active ? 'channel-row-active' : ''}`} key={channel.name} type="button">
-                    <span className="channel-symbol">#</span>
-                    <span className="min-w-0 flex-1">
-                      <span className={`block truncate text-sm font-black ${channel.muted ? 'text-white/48' : ''}`}>{channel.label}</span>
-                      <span className="mt-0.5 block truncate text-xs font-semibold text-white/42">{channel.updated} - {channel.members} members</span>
-                    </span>
-                    {channel.mention && <span className="mention-dot" />}
-                    {channel.unread && <span className="sidebar-badge">{channel.unread}</span>}
-                  </button>
-                ))}
-              </SidebarSection>
-
-              <SidebarSection action="+" title="Direct messages">
-                {directMessages.map((person) => (
-                  <button className="dm-row" key={person.name} type="button">
-                    <Avatar initials={person.initials} size="sm" status={person.status} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-black">{person.name}</span>
-                      <span className="mt-0.5 block truncate text-xs font-semibold text-white/42">{person.lastSeen}</span>
-                    </span>
-                    {person.unread && <span className="sidebar-badge">{person.unread}</span>}
-                  </button>
-                ))}
+              <SidebarSection title={query.trim() ? 'Search results' : 'Recent DMs'}>
+                {query.trim() ? (
+                  <SearchResults isLoading={isSearching} isStarting={isStarting} onStartDm={handleStartDm} results={searchResults} />
+                ) : (
+                  <ConversationList activeConversationId={activeConversation?.id} conversations={conversations} onSelect={setActiveConversationId} />
+                )}
               </SidebarSection>
             </div>
 
@@ -271,116 +378,68 @@ function Workspace({ user, isLoading, onLogout }: WorkspaceProps) {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.14em] text-[#707984]">
                   <span className="h-2 w-2 rounded-full bg-[#2eb67d] shadow-[0_0_0_4px_rgba(46,182,125,0.13)]" />
-                  Product workspace
+                  {user.workspaceName}
                 </div>
-                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-                  <h1 className="truncate text-2xl font-black text-[#17191c]"># {activeChannel.label}</h1>
-                  <span className="channel-meta-pill">{activeChannel.members} members</span>
-                  <span className="channel-meta-pill">Updated {activeChannel.updated}</span>
-                </div>
-                <p className="mt-1 max-w-3xl text-sm font-medium leading-6 text-[#606975]">{activeChannel.description}</p>
+                <h1 className="mt-1 truncate text-2xl font-black text-[#17191c]">
+                  {activeParticipant ? activeParticipant.name : 'Start a direct message'}
+                </h1>
+                <p className="mt-1 max-w-3xl text-sm font-medium leading-6 text-[#606975]">
+                  {activeParticipant ? `Private conversation with ${activeParticipant.email}` : 'Search for someone in your workspace to open a 1:1 chat.'}
+                </p>
               </div>
 
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <button className="header-action" title="Channel notes" type="button">Notes</button>
-                <button className="header-action" title="Start huddle" type="button">Huddle</button>
                 <div className="workspace-search">
                   <span className="font-black text-[#4a154b]">S</span>
-                  <span className="truncate">Search messages, files, and people</span>
-                  <kbd>Ctrl K</kbd>
+                  <span className="truncate">Search same-workspace teammates</span>
+                  <kbd>DM</kbd>
                 </div>
                 <Avatar initials={initials} />
               </div>
             </div>
           </header>
 
-          <div className="grid flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_356px]">
+          <div className="grid flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]">
             <div className="min-w-0 px-4 py-5 sm:px-6">
               <div className="conversation-panel animate-workspace-in">
-                <div className="conversation-hero">
-                  <div className="min-w-0">
-                    <p className="text-xs font-black uppercase tracking-[0.14em] text-[#707984]">Today</p>
-                    <h2 className="mt-1 text-xl font-black">Launch readiness and workspace polish</h2>
-                    <p className="mt-2 max-w-2xl text-sm leading-6 text-[#606975]">
-                      A focused channel for product decisions, design quality, and frontend readiness before the beta rollout.
-                    </p>
-                  </div>
-                  <div className="hero-score">
-                    <span>84%</span>
-                    <p>confidence</p>
-                  </div>
-                </div>
+                {error && <p className="dm-error">{error}</p>}
 
-                <div className="conversation-stream">
-                  <DateDivider label="Today, May 26" />
-                  {messages.map((message, index) => (
-                    <MessageItem message={message} key={`${message.author}-${message.time}`} index={index} />
-                  ))}
-                </div>
-
-                <div className="composer-shell">
-                  <div className="composer-input">
-                    <span className="text-[#8a939d]">Share an update in #product-briefing</span>
-                  </div>
-                  <div className="composer-footer">
-                    <div className="flex flex-wrap gap-1">
-                      {['B', 'I', 'Link', 'Task', '@'].map((tool) => (
-                        <button className="composer-tool" key={tool} type="button">{tool}</button>
-                      ))}
-                    </div>
-                    <button className="send-button" type="button">Send update</button>
-                  </div>
-                </div>
+                {activeParticipant ? (
+                  <DirectConversationPanel
+                    draft={messageDraft}
+                    isSending={isSending}
+                    messages={messages}
+                    onDraftChange={setMessageDraft}
+                    onSubmit={handleComposerSubmit}
+                    participant={activeParticipant}
+                    socketStatus={socketStatus}
+                    user={user}
+                  />
+                ) : (
+                  <EmptyDirectState hasQuery={Boolean(query.trim())} />
+                )}
               </div>
             </div>
 
             <aside className="right-panel border-t border-[#d9dee4] bg-[#f8fafb] px-4 py-5 sm:px-6 xl:border-l xl:border-t-0">
               <div className="space-y-5">
-                <PanelBlock eyebrow="Channel pulse" title="Work is moving">
-                  <div className="grid grid-cols-3 gap-2">
-                    <Metric label="Open tasks" value="12" tone="green" />
-                    <Metric label="Mentions" value="4" tone="pink" />
-                    <Metric label="Files" value="18" tone="blue" />
+                <PanelBlock eyebrow="Workspace" title={user.workspaceName}>
+                  <div className="grid gap-2">
+                    <Metric label="Direct threads" value={String(conversations.length)} tone="green" />
+                    <Metric label="Search scope" value="1" tone="blue" />
                   </div>
                 </PanelBlock>
 
-                <PanelBlock eyebrow="Upcoming" title="Today's syncs">
-                  <div className="space-y-2">
-                    {upcoming.map((item) => (
-                      <button className="right-list-row" key={`${item.time}-${item.title}`} type="button">
-                        <span className="time-chip">{item.time}</span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate font-black">{item.title}</span>
-                          <span className="mt-0.5 block text-xs font-semibold text-[#707984]">{item.people}</span>
-                        </span>
-                      </button>
-                    ))}
+                <PanelBlock eyebrow="Connection" title={socketStatusLabel(socketStatus)}>
+                  <div className="space-y-3 text-sm font-semibold leading-6 text-[#606975]">
+                    <p>{socketStatusHelp(socketStatus)}</p>
                   </div>
                 </PanelBlock>
 
-                <PanelBlock eyebrow="Activity" title="Recent movement">
-                  <div className="space-y-3">
-                    {activity.map((item) => (
-                      <div className="activity-row" key={`${item.user}-${item.time}`}>
-                        <span className="activity-dot" />
-                        <p><strong>{item.user}</strong> {item.action}</p>
-                        <span>{item.time}</span>
-                      </div>
-                    ))}
-                  </div>
-                </PanelBlock>
-
-                <PanelBlock eyebrow="Shared files" title="Pinned resources">
-                  <div className="space-y-2">
-                    {files.map((file) => (
-                      <button className="file-row" key={file.name} type="button">
-                        <span className="file-icon">F</span>
-                        <span className="min-w-0">
-                          <span className="block truncate font-black">{file.name}</span>
-                          <span className="mt-0.5 block truncate text-xs font-semibold text-[#707984]">{file.meta}</span>
-                        </span>
-                      </button>
-                    ))}
+                <PanelBlock eyebrow="DM model" title="Realtime-ready">
+                  <div className="space-y-3 text-sm font-semibold leading-6 text-[#606975]">
+                    <p>Conversations have members now, so sockets can later join a room by conversation id.</p>
+                    <p>Messages are tied to a sender and conversation, leaving channel support open without changing the DM contract.</p>
                   </div>
                 </PanelBlock>
               </div>
@@ -392,56 +451,174 @@ function Workspace({ user, isLoading, onLogout }: WorkspaceProps) {
   );
 }
 
-type SidebarSectionProps = {
-  title: string;
-  action: string;
-  children: ReactNode;
-};
+function SearchResults({
+  results,
+  isLoading,
+  isStarting,
+  onStartDm
+}: {
+  results: Teammate[];
+  isLoading: boolean;
+  isStarting: string;
+  onStartDm: (teammate: Teammate) => void;
+}) {
+  if (isLoading) {
+    return <p className="sidebar-empty">Searching...</p>;
+  }
 
-function SidebarSection({ title, action, children }: SidebarSectionProps) {
+  if (!results.length) {
+    return <p className="sidebar-empty">No matching teammate in this workspace.</p>;
+  }
+
+  return (
+    <>
+      {results.map((person) => (
+        <button className="dm-row" disabled={Boolean(isStarting)} key={person.id} onClick={() => onStartDm(person)} type="button">
+          <Avatar initials={getInitials(person.name)} size="sm" status="online" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-black">{person.name}</span>
+            <span className="mt-0.5 block truncate text-xs font-semibold text-white/42">{person.email}</span>
+          </span>
+          <span className="dm-start-chip">{isStarting === person.id ? '...' : 'DM'}</span>
+        </button>
+      ))}
+    </>
+  );
+}
+
+function ConversationList({
+  conversations,
+  activeConversationId,
+  onSelect
+}: {
+  conversations: DirectConversation[];
+  activeConversationId?: string;
+  onSelect: (conversationId: string) => void;
+}) {
+  if (!conversations.length) {
+    return <p className="sidebar-empty">Search for a teammate to start your first DM.</p>;
+  }
+
+  return (
+    <>
+      {conversations.map((conversation) => {
+        const participant = conversation.participant;
+
+        if (!participant) {
+          return null;
+        }
+
+        return (
+          <button className={`dm-row ${activeConversationId === conversation.id ? 'dm-row-active' : ''}`} key={conversation.id} onClick={() => onSelect(conversation.id)} type="button">
+            <Avatar initials={getInitials(participant.name)} size="sm" status="online" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-black">{participant.name}</span>
+              <span className="mt-0.5 block truncate text-xs font-semibold text-white/42">{conversation.lastMessage?.content ?? 'No messages yet'}</span>
+            </span>
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+function DirectConversationPanel({
+  participant,
+  user,
+  messages,
+  draft,
+  isSending,
+  socketStatus,
+  onDraftChange,
+  onSubmit
+}: {
+  participant: Teammate;
+  user: User;
+  messages: RealtimeMessage[];
+  draft: string;
+  isSending: boolean;
+  socketStatus: SocketStatus;
+  onDraftChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <>
+      <div className="conversation-hero">
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar initials={getInitials(participant.name)} status="online" />
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-[#707984]">Direct message</p>
+            <h2 className="mt-1 truncate text-xl font-black">{participant.name}</h2>
+            <p className="mt-1 truncate text-sm font-semibold text-[#606975]">{participant.email}</p>
+          </div>
+        </div>
+        <span className="channel-meta-pill">Same workspace</span>
+      </div>
+
+      <div className="conversation-stream">
+        <DateDivider label="Today" />
+        {messages.length ? (
+          messages.map((message, index) => {
+            const isOwn = message.sender.id === user.id;
+
+            return (
+              <article className={`message-card ${isOwn ? 'message-card-own' : ''}`} key={message.id} style={{ animationDelay: `${index * 55}ms` }}>
+                <Avatar initials={getInitials(message.sender.name)} status={isOwn ? 'online' : undefined} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <h3 className="font-black">{isOwn ? 'You' : message.sender.name}</h3>
+                    <span className="text-xs font-bold text-[#8a939d]">{formatMessageTime(message.createdAt)}</span>
+                    {message.status && <span className={`message-status message-status-${message.status}`}>{message.status}</span>}
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap text-[0.95rem] leading-7 text-[#343940]">{message.content}</p>
+                </div>
+              </article>
+            );
+          })
+        ) : (
+          <div className="dm-thread-empty">
+            <p>No messages yet.</p>
+            <span>Send the first note to start the conversation.</span>
+          </div>
+        )}
+      </div>
+
+      <form className="composer-shell" onSubmit={onSubmit}>
+        <textarea
+          className="dm-composer-input"
+          maxLength={4000}
+          onChange={(event) => onDraftChange(event.target.value)}
+          placeholder={`Message ${participant.name}`}
+          rows={4}
+          value={draft}
+        />
+        <div className="composer-footer">
+          <span className="text-xs font-bold text-[#707984]">{socketStatusLabel(socketStatus)} - {draft.length}/4000</span>
+          <button className="send-button" disabled={isSending || !draft.trim() || socketStatus !== 'connected'} type="submit">{isSending ? 'Sending...' : 'Send'}</button>
+        </div>
+      </form>
+    </>
+  );
+}
+
+function EmptyDirectState({ hasQuery }: { hasQuery: boolean }) {
+  return (
+    <div className="empty-dm-state">
+      <div className="empty-dm-mark">@</div>
+      <h2>{hasQuery ? 'Pick a teammate from search' : 'Find someone to DM'}</h2>
+      <p>Search uses your workspace name, so only people from the same company/workspace can appear and start a direct chat.</p>
+    </div>
+  );
+}
+
+function SidebarSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mt-6">
       <div className="mb-2 flex items-center justify-between px-2">
         <h2 className="text-xs font-black uppercase tracking-[0.14em] text-white/42">{title}</h2>
-        <button className="section-action" type="button">{action}</button>
       </div>
       <div className="grid gap-1">{children}</div>
     </section>
-  );
-}
-
-function MessageItem({ message, index }: { message: Message; index: number }) {
-  return (
-    <article className={`message-card ${message.tone === 'highlight' ? 'message-card-highlight' : ''} ${message.tone === 'own' ? 'message-card-own' : ''}`} style={{ animationDelay: `${index * 55}ms` }}>
-      <Avatar initials={message.avatar} status={message.tone === 'own' ? 'online' : undefined} />
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <h3 className="font-black">{message.author}</h3>
-          <span className="rounded-full bg-[#eef1f4] px-2 py-0.5 text-xs font-black text-[#606975]">{message.role}</span>
-          <span className="text-xs font-bold text-[#8a939d]">{message.time}</span>
-        </div>
-        <p className="mt-2 text-[0.95rem] leading-7 text-[#343940]">{message.body}</p>
-        {message.attachment && (
-          <div className="message-attachment">
-            <div className="attachment-bar" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-black">{message.attachment.title}</p>
-              <p className="mt-1 text-sm font-semibold text-[#707984]">{message.attachment.meta}</p>
-            </div>
-            <span>{message.attachment.status}</span>
-          </div>
-        )}
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          {message.reactions.map((reaction) => (
-            <button className={`reaction-pill ${reaction.active ? 'reaction-pill-active' : ''}`} key={reaction.label} type="button">
-              <span>{reaction.label}</span>
-              {reaction.count}
-            </button>
-          ))}
-          {message.replies && <button className="thread-link" type="button">{message.replies} replies</button>}
-        </div>
-      </div>
-    </article>
   );
 }
 
@@ -459,7 +636,7 @@ type AvatarProps = {
   initials: string;
   size?: 'sm' | 'md';
   tone?: 'default' | 'light';
-  status?: DirectMessage['status'];
+  status?: 'online' | 'away' | 'offline' | 'focus';
 };
 
 function Avatar({ initials, size = 'md', tone = 'default', status }: AvatarProps) {
@@ -474,13 +651,7 @@ function Avatar({ initials, size = 'md', tone = 'default', status }: AvatarProps
   );
 }
 
-type PanelBlockProps = {
-  eyebrow: string;
-  title: string;
-  children: ReactNode;
-};
-
-function PanelBlock({ eyebrow, title, children }: PanelBlockProps) {
+function PanelBlock({ eyebrow, title, children }: { eyebrow: string; title: string; children: ReactNode }) {
   return (
     <section className="panel-block">
       <p className="text-xs font-black uppercase tracking-[0.14em] text-[#707984]">{eyebrow}</p>
@@ -490,19 +661,35 @@ function PanelBlock({ eyebrow, title, children }: PanelBlockProps) {
   );
 }
 
-type MetricProps = {
-  label: string;
-  value: string;
-  tone: 'green' | 'pink' | 'blue';
-};
-
-function Metric({ label, value, tone }: MetricProps) {
+function Metric({ label, value, tone }: { label: string; value: string; tone: 'green' | 'pink' | 'blue' }) {
   return (
     <div className={`metric-card metric-${tone}`}>
       <p>{value}</p>
       <span>{label}</span>
     </div>
   );
+}
+
+function upsertConversation(conversations: DirectConversation[], conversation: DirectConversation) {
+  return [conversation, ...conversations.filter((item) => item.id !== conversation.id)];
+}
+
+function mergeRealtimeMessage(messages: RealtimeMessage[], serverMessage: DirectMessage, clientMessageId?: string) {
+  const existingIndex = messages.findIndex((message) => message.id === serverMessage.id || (clientMessageId && message.clientMessageId === clientMessageId));
+
+  if (existingIndex === -1) {
+    return [...messages, { ...serverMessage, status: 'sent' as const }];
+  }
+
+  return messages.map((message, index) => (index === existingIndex ? { ...serverMessage, status: 'sent' as const } : message));
+}
+
+function markMessageFailed(messages: RealtimeMessage[], clientMessageId: string) {
+  return messages.map((message) => (message.clientMessageId === clientMessageId ? { ...message, status: 'failed' as const } : message));
+}
+
+function createClientMessageId() {
+  return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 function getInitials(name: string) {
@@ -516,6 +703,35 @@ function getInitials(name: string) {
     .slice(0, 2)
     .map((word) => word.charAt(0).toUpperCase())
     .join('');
+}
+
+function formatMessageTime(date: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(new Date(date));
+}
+
+function socketStatusLabel(status: SocketStatus) {
+  const labels: Record<SocketStatus, string> = {
+    connecting: 'Connecting',
+    connected: 'Realtime on',
+    disconnected: 'Reconnecting',
+    error: 'Realtime offline'
+  };
+
+  return labels[status];
+}
+
+function socketStatusHelp(status: SocketStatus) {
+  const copy: Record<SocketStatus, string> = {
+    connecting: 'Opening a secure socket connection for live direct messages.',
+    connected: 'New messages sync instantly in active conversations.',
+    disconnected: 'Trying to reconnect. New sends are paused until the socket returns.',
+    error: 'Realtime messaging is unavailable. Refresh or sign in again if this persists.'
+  };
+
+  return copy[status];
 }
 
 export default Workspace;

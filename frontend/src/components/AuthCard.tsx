@@ -68,7 +68,8 @@ function AuthForm({ mode, error, success, isLoading, onModeChange, onSubmit }: A
       isRegister
         ? {
             ...payload,
-            name: String(formData.get('name') || '').trim()
+            name: String(formData.get('name') || '').trim(),
+            workspaceName: String(formData.get('workspaceName') || '').trim()
           }
         : payload
     );
@@ -135,7 +136,7 @@ function AuthForm({ mode, error, success, isLoading, onModeChange, onSubmit }: A
           {isRegister && (
             <label className="field-group">
               <span>Workspace name</span>
-              <input autoComplete="organization" placeholder="Acme Studio" type="text" />
+              <input autoComplete="organization" minLength={2} name="workspaceName" placeholder="Acme Studio" required type="text" />
             </label>
           )}
 
