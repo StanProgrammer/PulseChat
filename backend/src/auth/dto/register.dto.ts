@@ -15,6 +15,11 @@ export class RegisterDto {
   password!: string;
 
   @IsString()
+  @MinLength(8)
+  @MaxLength(72)
+  confirmPassword!: string;
+
+  @IsString()
   @MinLength(2)
   @MaxLength(80)
   workspaceName!: string;

@@ -7,7 +7,8 @@ import {
   logout,
   refreshSession,
   register,
-  storeAccessToken
+  storeAccessToken,
+  verifyEmail
 } from './api/auth';
 import AuthCard from './components/AuthCard';
 import MarketingPanel from './components/MarketingPanel';
@@ -28,6 +29,21 @@ function App() {
 
     const restoreSession = async () => {
       try {
+        const verificationToken = new URLSearchParams(window.location.search).get('verifyToken');
+
+        if (verificationToken) {
+          const verification = await verifyEmail(verificationToken);
+
+          if (isMounted) {
+            clearSession();
+            setMode('login');
+            setSuccess(verification.message);
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+
+          return;
+        }
+
         if (accessToken) {
           const profile = await getProfile(accessToken);
 
@@ -80,10 +96,18 @@ function App() {
     setIsLoading(true);
 
     try {
-      const authResponse = isRegister ? await register(payload as RegisterPayload) : await login(payload);
+      if (isRegister) {
+        const registerResponse = await register(payload as RegisterPayload);
+
+        setMode('login');
+        setSuccess(registerResponse.message);
+        return true;
+      }
+
+      const authResponse = await login(payload);
 
       saveSession(authResponse);
-      setSuccess(isRegister ? 'Account created. Your workspace session is ready.' : 'Signed in successfully.');
+      setSuccess('Signed in successfully.');
       return true;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unable to complete authentication.');

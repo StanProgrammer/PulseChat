@@ -1,4 +1,4 @@
-import { AuthResponse, LoginPayload, RegisterPayload, User } from '../types/auth';
+import { AuthResponse, LoginPayload, MessageResponse, RegisterPayload, User } from '../types/auth';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 const ACCESS_TOKEN_KEY = 'pulsechat_access_token';
@@ -64,9 +64,16 @@ export function login(payload: LoginPayload) {
 }
 
 export function register(payload: RegisterPayload) {
-  return apiRequest<AuthResponse>('/auth/register', {
+  return apiRequest<MessageResponse>('/auth/register', {
     method: 'POST',
     body: JSON.stringify(payload)
+  });
+}
+
+export function verifyEmail(token: string) {
+  return apiRequest<MessageResponse>('/auth/verify-email', {
+    method: 'POST',
+    body: JSON.stringify({ token })
   });
 }
 

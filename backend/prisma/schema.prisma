@@ -24,6 +24,21 @@ model User {
   @@index([workspaceName, name])
 }
 
+model EmailVerification {
+  id         String   @id @default(cuid())
+  name       String
+  email      String   @unique
+  password   String
+  workspaceName String @default("Default Workspace")
+  avatar     String?
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([expiresAt])
+}
+
 model Message {
   id             String       @id @default(cuid())
   content        String

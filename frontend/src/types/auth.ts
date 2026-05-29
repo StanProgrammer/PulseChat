@@ -24,5 +24,10 @@ export type LoginPayload = {
 
 export type RegisterPayload = LoginPayload & {
   name: string;
+  confirmPassword: string;
   workspaceName: string;
+};
+
+export type MessageResponse = {
+  message: string;
 };
