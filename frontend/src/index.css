@@ -352,6 +352,17 @@ button:focus-visible {
   padding: 0.65rem;
 }
 
+.composer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  border: 1px solid #dce2e7;
+  border-bottom: 0;
+  border-radius: 1rem 1rem 0 0;
+  background: #f8fafb;
+  padding: 0.55rem;
+}
+
 .right-panel {
   box-shadow: inset 1px 0 0 rgb(255 255 255 / 0.7);
 }
@@ -395,6 +406,31 @@ button:focus-visible {
   color: #34383c;
   font-size: 0.78rem;
   padding: 0 0.75rem;
+}
+
+.composer-tool {
+  width: 2.35rem;
+  min-width: 2.35rem;
+  padding: 0;
+}
+
+.composer-tool-active {
+  border-color: rgb(74 21 75 / 0.22);
+  background: rgb(74 21 75 / 0.08);
+  color: #4a154b;
+  box-shadow: inset 0 0 0 1px rgb(74 21 75 / 0.08);
+}
+
+.composer-tool-italic {
+  font-style: italic;
+}
+
+.composer-tool-underline {
+  text-decoration: underline;
+}
+
+.composer-tool-strikethrough {
+  text-decoration: line-through;
 }
 
 .header-action:hover,
@@ -736,12 +772,10 @@ button:focus-visible {
   display: block;
   width: 100%;
   min-height: 7rem;
-  resize: vertical;
   border: 1px solid #dce2e7;
-  border-radius: 1rem 1rem 0 0;
+  border-radius: 0;
   background: #ffffff;
   color: #343940;
-  padding: 1rem;
   font: inherit;
   font-size: 0.95rem;
   line-height: 1.6;
@@ -750,6 +784,53 @@ button:focus-visible {
 .dm-composer-input:disabled {
   background: #f8fafb;
   color: #8a939d;
+}
+
+.dm-composer-editor {
+  min-height: 7rem;
+  padding: 1rem;
+  outline: none;
+  white-space: pre-wrap;
+}
+
+.dm-composer-editor p {
+  margin: 0;
+}
+
+.dm-composer-editor p + p {
+  margin-top: 0.65rem;
+}
+
+.dm-composer-editor ul,
+.dm-composer-editor ol {
+  margin: 0.5rem 0;
+  padding-left: 1.35rem;
+}
+
+.dm-composer-editor a {
+  color: #16708d;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+}
+
+.dm-composer-editor code {
+  border-radius: 0.35rem;
+  background: #eef1f4;
+  padding: 0.1rem 0.28rem;
+  color: #343940;
+  font-size: 0.9em;
+  font-weight: 800;
+}
+
+.dm-composer-editor.ProseMirror-focused {
+  box-shadow: inset 0 0 0 1px rgb(74 21 75 / 0.08);
+}
+
+.dm-composer-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #8a939d;
+  pointer-events: none;
 }
 
 .avatar-gradient {
@@ -837,6 +918,56 @@ button:focus-visible {
 .message-card-own {
   border-color: rgb(46 182 125 / 0.16);
   background: rgb(241 250 246 / 0.78);
+}
+
+.message-content strong {
+  font-weight: 900;
+}
+
+.message-content p {
+  margin: 0;
+}
+
+.message-content p + p {
+  margin-top: 0.65rem;
+}
+
+.message-content em {
+  font-style: italic;
+}
+
+.message-content s {
+  text-decoration-thickness: 0.08em;
+}
+
+.message-underline {
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+}
+
+.message-content u {
+  text-underline-offset: 0.14em;
+}
+
+.message-content ul,
+.message-content ol {
+  margin: 0.5rem 0 0;
+  padding-left: 1.35rem;
+}
+
+.message-content a {
+  color: #16708d;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+}
+
+.message-content code {
+  border-radius: 0.35rem;
+  background: #eef1f4;
+  padding: 0.1rem 0.28rem;
+  font-size: 0.9em;
+  font-weight: 800;
 }
 
 .message-status {

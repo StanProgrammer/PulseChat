@@ -124,9 +124,14 @@ export class MessagingService {
     await this.ensureConversationMember(currentUserId, conversationId);
 
     const trimmedContent = content.trim();
+    const plainContent = trimmedContent.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
 
-    if (!trimmedContent) {
+    if (!plainContent) {
       throw new BadRequestException('Message cannot be empty.');
+    }
+
+    if (trimmedContent.length > 4000) {
+      throw new BadRequestException('Message is too long.');
     }
 
     const message = await this.prisma.message.create({

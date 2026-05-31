@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import type { ClipboardEvent, FormEvent, ReactNode } from 'react';
+import DOMPurify from 'dompurify';
 import { io, Socket } from 'socket.io-client';
 import {
   DirectConversation,
@@ -48,6 +49,14 @@ type SocketAck = {
 };
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:4000';
+const TEXT_FORMAT_OPTIONS = [
+  { label: 'B', title: 'Bold', command: 'bold' },
+  { label: 'I', title: 'Italic', command: 'italic' },
+  { label: 'U', title: 'Underline', command: 'underline' },
+  { label: 'S', title: 'Strikethrough', command: 'strikeThrough' }
+] as const;
+const EMPTY_EDITOR_HTML = '';
+const MESSAGE_HTML_TAGS = ['p', 'div', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'strike', 'ul', 'ol', 'li', 'a', 'code', 'pre', 'span'];
 
 function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   const [query, setQuery] = useState('');
@@ -57,7 +66,8 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   const [isSearching, setIsSearching] = useState(false);
   const [isStarting, setIsStarting] = useState('');
   const [messages, setMessages] = useState<RealtimeMessage[]>([]);
-  const [messageDraft, setMessageDraft] = useState('');
+  const [messageDraft, setMessageDraft] = useState(EMPTY_EDITOR_HTML);
+  const [messageDraftText, setMessageDraftText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [socketStatus, setSocketStatus] = useState<SocketStatus>('connecting');
   const [error, setError] = useState('');
@@ -256,11 +266,11 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   const handleComposerSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!activeConversation?.id || !messageDraft.trim()) {
+    if (!activeConversation?.id || !messageDraftText.trim()) {
       return;
     }
 
-    const content = messageDraft.trim();
+    const content = sanitizeMessageHtml(messageDraft);
     const clientMessageId = createClientMessageId();
     const optimisticMessage: RealtimeMessage = {
       id: clientMessageId,
@@ -280,7 +290,8 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
 
     setIsSending(true);
     setError('');
-    setMessageDraft('');
+    setMessageDraft(EMPTY_EDITOR_HTML);
+    setMessageDraftText('');
     setMessages((current) => [...current, optimisticMessage]);
     setConversations((current) =>
       upsertConversation(current, {
@@ -407,9 +418,13 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
                 {activeParticipant ? (
                   <DirectConversationPanel
                     draft={messageDraft}
+                    draftText={messageDraftText}
                     isSending={isSending}
                     messages={messages}
-                    onDraftChange={setMessageDraft}
+                    onDraftChange={(html, text) => {
+                      setMessageDraft(html);
+                      setMessageDraftText(text);
+                    }}
                     onSubmit={handleComposerSubmit}
                     participant={activeParticipant}
                     socketStatus={socketStatus}
@@ -513,7 +528,7 @@ function ConversationList({
             <Avatar initials={getInitials(participant.name)} size="sm" status="online" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-black">{participant.name}</span>
-              <span className="mt-0.5 block truncate text-xs font-semibold text-white/42">{conversation.lastMessage?.content ?? 'No messages yet'}</span>
+              <span className="mt-0.5 block truncate text-xs font-semibold text-white/42">{conversation.lastMessage ? formatMessagePreview(conversation.lastMessage.content) : 'No messages yet'}</span>
             </span>
           </button>
         );
@@ -527,6 +542,7 @@ function DirectConversationPanel({
   user,
   messages,
   draft,
+  draftText,
   isSending,
   socketStatus,
   onDraftChange,
@@ -536,11 +552,71 @@ function DirectConversationPanel({
   user: User;
   messages: RealtimeMessage[];
   draft: string;
+  draftText: string;
   isSending: boolean;
   socketStatus: SocketStatus;
-  onDraftChange: (value: string) => void;
+  onDraftChange: (html: string, text: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const [activeMarks, setActiveMarks] = useState<Record<TextFormatCommand, boolean>>({
+    bold: false,
+    italic: false,
+    underline: false,
+    strikeThrough: false
+  });
+
+  useEffect(() => {
+    const editor = editorRef.current;
+
+    if (!editor || draft || editor.innerHTML === '') {
+      return;
+    }
+
+    editor.innerHTML = '';
+  }, [draft]);
+
+  useEffect(() => {
+    const updateActiveMarks = () => {
+      const editor = editorRef.current;
+      const selection = window.getSelection();
+
+      if (!editor || !selection?.rangeCount || !editor.contains(selection.anchorNode)) {
+        return;
+      }
+
+      setActiveMarks({
+        bold: document.queryCommandState('bold'),
+        italic: document.queryCommandState('italic'),
+        underline: document.queryCommandState('underline'),
+        strikeThrough: document.queryCommandState('strikeThrough')
+      });
+    };
+
+    document.addEventListener('selectionchange', updateActiveMarks);
+    return () => document.removeEventListener('selectionchange', updateActiveMarks);
+  }, []);
+
+  const syncEditorDraft = () => {
+    const editor = editorRef.current;
+
+    if (!editor) {
+      return;
+    }
+
+    onDraftChange(sanitizeMessageHtml(editor.innerHTML), editor.textContent || '');
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const html = event.clipboardData.getData('text/html');
+    const text = event.clipboardData.getData('text/plain');
+    const content = html ? sanitizeMessageHtml(html) : escapeHtml(text).replace(/\r?\n/g, '<br>');
+
+    document.execCommand('insertHTML', false, content);
+    syncEditorDraft();
+  };
+
   return (
     <>
       <div className="conversation-hero">
@@ -570,7 +646,7 @@ function DirectConversationPanel({
                     <span className="text-xs font-bold text-[#8a939d]">{formatMessageTime(message.createdAt)}</span>
                     {message.status && <span className={`message-status message-status-${message.status}`}>{message.status}</span>}
                   </div>
-                  <p className="mt-2 whitespace-pre-wrap text-[0.95rem] leading-7 text-[#343940]">{message.content}</p>
+                  <div className="message-content mt-2 text-[0.95rem] leading-7 text-[#343940]" dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }} />
                 </div>
               </article>
             );
@@ -584,17 +660,36 @@ function DirectConversationPanel({
       </div>
 
       <form className="composer-shell" onSubmit={onSubmit}>
-        <textarea
-          className="dm-composer-input"
-          maxLength={4000}
-          onChange={(event) => onDraftChange(event.target.value)}
-          placeholder={`Message ${participant.name}`}
-          rows={4}
-          value={draft}
-        />
+        <div className="composer-toolbar" aria-label="Message formatting tools">
+          {TEXT_FORMAT_OPTIONS.map((option) => (
+            <button
+              className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
+              key={option.title}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => toggleEditorCommand(editorRef.current, option.command, syncEditorDraft)}
+              title={option.title}
+              type="button"
+            >
+              <span className={`composer-tool-${option.title.toLowerCase()}`}>{option.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="dm-composer-input">
+          <div
+            aria-label={`Message ${participant.name}`}
+            className="dm-composer-editor"
+            contentEditable
+            data-placeholder={`Message ${participant.name}`}
+            onInput={syncEditorDraft}
+            onPaste={handlePaste}
+            ref={editorRef}
+            role="textbox"
+            suppressContentEditableWarning
+          />
+        </div>
         <div className="composer-footer">
-          <span className="text-xs font-bold text-[#707984]">{socketStatusLabel(socketStatus)} - {draft.length}/4000</span>
-          <button className="send-button" disabled={isSending || !draft.trim() || socketStatus !== 'connected'} type="submit">{isSending ? 'Sending...' : 'Send'}</button>
+          <span className="text-xs font-bold text-[#707984]">{socketStatusLabel(socketStatus)} - {draftText.length}/4000</span>
+          <button className="send-button" disabled={isSending || !draftText.trim() || draft.length > 4000 || socketStatus !== 'connected'} type="submit">{isSending ? 'Sending...' : 'Send'}</button>
         </div>
       </form>
     </>
@@ -638,6 +733,8 @@ type AvatarProps = {
   tone?: 'default' | 'light';
   status?: 'online' | 'away' | 'offline' | 'focus';
 };
+
+type TextFormatCommand = (typeof TEXT_FORMAT_OPTIONS)[number]['command'];
 
 function Avatar({ initials, size = 'md', tone = 'default', status }: AvatarProps) {
   const sizeClass = size === 'sm' ? 'h-8 w-8 text-xs' : 'h-10 w-10 text-sm';
@@ -710,6 +807,43 @@ function formatMessageTime(date: string) {
     hour: 'numeric',
     minute: '2-digit'
   }).format(new Date(date));
+}
+
+function formatMessagePreview(content: string) {
+  if (!content.trim()) {
+    return '';
+  }
+
+  const element = document.createElement('div');
+  element.innerHTML = sanitizeMessageHtml(content);
+  return element.textContent?.trim() || 'Rich text message';
+}
+
+function sanitizeMessageHtml(content: string) {
+  return DOMPurify.sanitize(content, {
+    ALLOWED_TAGS: MESSAGE_HTML_TAGS,
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'data-type', 'data-id', 'class'],
+    ALLOW_DATA_ATTR: true
+  });
+}
+
+function toggleEditorCommand(editor: HTMLDivElement | null, command: TextFormatCommand, onChange: () => void) {
+  if (!editor) {
+    return;
+  }
+
+  editor.focus();
+  document.execCommand(command);
+  onChange();
+}
+
+function escapeHtml(content: string) {
+  return content
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function socketStatusLabel(status: SocketStatus) {
