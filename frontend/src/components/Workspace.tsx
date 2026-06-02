@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ClipboardEvent, FormEvent, ReactNode } from 'react';
+import type { ClipboardEvent, FormEvent, KeyboardEvent, ReactNode } from 'react';
 import DOMPurify from 'dompurify';
 import { io, Socket } from 'socket.io-client';
 import {
@@ -57,6 +57,7 @@ const TEXT_FORMAT_OPTIONS = [
   { label: 'UL', title: 'Bulleted list', command: 'insertUnorderedList', styleClass: 'unordered-list' },
   { label: 'OL', title: 'Numbered list', command: 'insertOrderedList', styleClass: 'ordered-list' }
 ] as const;
+const LINK_FORMAT_OPTION = { label: 'Link', title: 'Insert link' };
 const EMPTY_EDITOR_HTML = '';
 const MESSAGE_HTML_TAGS = ['p', 'div', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'strike', 'ul', 'ol', 'li', 'a', 'code', 'pre', 'span'];
 
@@ -535,6 +536,8 @@ function DirectConversationPanel({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const savedSelectionRef = useRef<Range | null>(null);
+  const linkTextInputRef = useRef<HTMLInputElement | null>(null);
   const [activeMarks, setActiveMarks] = useState<Record<TextFormatCommand, boolean>>({
     bold: false,
     italic: false,
@@ -543,6 +546,8 @@ function DirectConversationPanel({
     insertUnorderedList: false,
     insertOrderedList: false
   });
+  const [isLinkPopoverOpen, setIsLinkPopoverOpen] = useState(false);
+  const [linkDraft, setLinkDraft] = useState({ text: '', url: '', error: '' });
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -588,6 +593,102 @@ function DirectConversationPanel({
 
     document.execCommand('insertHTML', false, content);
     syncEditorDraft();
+  };
+
+  const openLinkPopover = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+
+    if (!editor) {
+      return;
+    }
+
+    editor.focus();
+
+    if (!selection || !selection.rangeCount) {
+      const fallbackRange = document.createRange();
+      fallbackRange.selectNodeContents(editor);
+      fallbackRange.collapse(false);
+      savedSelectionRef.current = fallbackRange;
+      setLinkDraft({ text: '', url: '', error: '' });
+      setIsLinkPopoverOpen(true);
+      window.requestAnimationFrame(() => linkTextInputRef.current?.focus());
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    let savedRange = range.cloneRange();
+    let selectedText = selection.toString();
+
+    if (!editor.contains(range.commonAncestorContainer)) {
+      savedRange = document.createRange();
+      savedRange.selectNodeContents(editor);
+      savedRange.collapse(false);
+      selectedText = '';
+    }
+
+    const activeLink = findClosestLink(selection.anchorNode, editor);
+
+    if (activeLink && !selectedText) {
+      savedRange = document.createRange();
+      savedRange.selectNode(activeLink);
+      selectedText = activeLink.textContent || '';
+    }
+
+    savedSelectionRef.current = savedRange;
+    setLinkDraft({
+      text: selectedText || activeLink?.textContent || '',
+      url: activeLink?.getAttribute('href') || '',
+      error: ''
+    });
+    setIsLinkPopoverOpen(true);
+    window.requestAnimationFrame(() => linkTextInputRef.current?.focus());
+  };
+
+  const closeLinkPopover = () => {
+    setIsLinkPopoverOpen(false);
+    setLinkDraft({ text: '', url: '', error: '' });
+    editorRef.current?.focus();
+  };
+
+  const insertLink = () => {
+    const href = normalizeLinkUrl(linkDraft.url);
+
+    if (!href) {
+      setLinkDraft((current) => ({ ...current, error: 'Enter a valid http, https, mailto, or tel link.' }));
+      return;
+    }
+
+    const text = linkDraft.text.trim() || href;
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+
+    if (!editor || !selection) {
+      return;
+    }
+
+    editor.focus();
+    selection.removeAllRanges();
+
+    if (savedSelectionRef.current) {
+      selection.addRange(savedSelectionRef.current);
+    }
+
+    document.execCommand('insertHTML', false, createLinkHtml(text, href));
+    syncEditorDraft();
+    closeLinkPopover();
+  };
+
+  const handleLinkPopoverKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeLinkPopover();
+    }
+
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      insertLink();
+    }
   };
 
   return (
@@ -664,7 +765,44 @@ function DirectConversationPanel({
                 <span className={`composer-tool-${option.styleClass}`}>{option.label}</span>
               </button>
             ))}
+            <button
+              aria-expanded={isLinkPopoverOpen}
+              className={`composer-tool composer-tool-link ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={openLinkPopover}
+              title={LINK_FORMAT_OPTION.title}
+              type="button"
+            >
+              {LINK_FORMAT_OPTION.label}
+            </button>
           </div>
+          {isLinkPopoverOpen && (
+            <div aria-label="Insert link" className="link-popover" onKeyDown={handleLinkPopoverKeyDown} role="dialog">
+              <label>
+                <span>Text</span>
+                <input
+                  ref={linkTextInputRef}
+                  onChange={(event) => setLinkDraft((current) => ({ ...current, text: event.target.value, error: '' }))}
+                  placeholder="Display text"
+                  value={linkDraft.text}
+                />
+              </label>
+              <label>
+                <span>Link</span>
+                <input
+                  inputMode="url"
+                  onChange={(event) => setLinkDraft((current) => ({ ...current, url: event.target.value, error: '' }))}
+                  placeholder="https://example.com"
+                  value={linkDraft.url}
+                />
+              </label>
+              {linkDraft.error && <p className="link-popover-error">{linkDraft.error}</p>}
+              <div className="link-popover-actions">
+                <button className="link-popover-secondary" onClick={closeLinkPopover} type="button">Cancel</button>
+                <button className="link-popover-primary" onClick={insertLink} type="button">Insert</button>
+              </div>
+            </div>
+          )}
           <span className="composer-meta">{socketStatusLabel(socketStatus)} - {draftText.length}/4000</span>
           <button className="send-button" disabled={isSending || !draftText.trim() || draft.length > 4000 || socketStatus !== 'connected'} type="submit">{isSending ? 'Sending...' : 'Send'}</button>
         </div>
@@ -778,11 +916,28 @@ function formatMessagePreview(content: string) {
 }
 
 function sanitizeMessageHtml(content: string) {
-  return DOMPurify.sanitize(content, {
+  const sanitized = DOMPurify.sanitize(content, {
     ALLOWED_TAGS: MESSAGE_HTML_TAGS,
     ALLOWED_ATTR: ['href', 'target', 'rel', 'data-type', 'data-id', 'class'],
     ALLOW_DATA_ATTR: true
   });
+  const element = document.createElement('div');
+  element.innerHTML = sanitized;
+
+  element.querySelectorAll('a').forEach((link) => {
+    const href = normalizeLinkUrl(link.getAttribute('href') || '');
+
+    if (!href) {
+      link.replaceWith(document.createTextNode(link.textContent || ''));
+      return;
+    }
+
+    link.setAttribute('href', href);
+    link.setAttribute('target', '_blank');
+    link.setAttribute('rel', 'noopener noreferrer');
+  });
+
+  return element.innerHTML;
 }
 
 function toggleEditorCommand(editor: HTMLDivElement | null, command: TextFormatCommand, onChange: () => void) {
@@ -804,6 +959,47 @@ function getActiveEditorCommands(): Record<TextFormatCommand, boolean> {
     insertUnorderedList: document.queryCommandState('insertUnorderedList'),
     insertOrderedList: document.queryCommandState('insertOrderedList')
   };
+}
+
+function findClosestLink(node: Node | null, editor: HTMLDivElement) {
+  let current: Node | null = node;
+
+  while (current && current !== editor) {
+    if (current instanceof HTMLAnchorElement) {
+      return current;
+    }
+
+    current = current.parentNode;
+  }
+
+  return null;
+}
+
+function normalizeLinkUrl(value: string) {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return '';
+  }
+
+  const withProtocol = /^[a-z][a-z\d+.-]*:/i.test(trimmedValue) ? trimmedValue : `https://${trimmedValue}`;
+
+  try {
+    const url = new URL(withProtocol);
+    const allowedProtocols = ['http:', 'https:', 'mailto:', 'tel:'];
+
+    if (!allowedProtocols.includes(url.protocol)) {
+      return '';
+    }
+
+    return url.href;
+  } catch {
+    return '';
+  }
+}
+
+function createLinkHtml(text: string, href: string) {
+  return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text)}</a>`;
 }
 
 function escapeHtml(content: string) {
