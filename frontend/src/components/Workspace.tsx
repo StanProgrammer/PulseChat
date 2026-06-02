@@ -50,10 +50,12 @@ type SocketAck = {
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:4000';
 const TEXT_FORMAT_OPTIONS = [
-  { label: 'B', title: 'Bold', command: 'bold' },
-  { label: 'I', title: 'Italic', command: 'italic' },
-  { label: 'U', title: 'Underline', command: 'underline' },
-  { label: 'S', title: 'Strikethrough', command: 'strikeThrough' }
+  { label: 'B', title: 'Bold', command: 'bold', styleClass: 'bold' },
+  { label: 'I', title: 'Italic', command: 'italic', styleClass: 'italic' },
+  { label: 'U', title: 'Underline', command: 'underline', styleClass: 'underline' },
+  { label: 'S', title: 'Strikethrough', command: 'strikeThrough', styleClass: 'strikethrough' },
+  { label: 'UL', title: 'Bulleted list', command: 'insertUnorderedList', styleClass: 'unordered-list' },
+  { label: 'OL', title: 'Numbered list', command: 'insertOrderedList', styleClass: 'ordered-list' }
 ] as const;
 const EMPTY_EDITOR_HTML = '';
 const MESSAGE_HTML_TAGS = ['p', 'div', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'strike', 'ul', 'ol', 'li', 'a', 'code', 'pre', 'span'];
@@ -383,7 +385,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-col">
+        <section className="flex h-screen min-w-0 flex-col overflow-hidden">
           <header className="workspace-header sticky top-0 z-20 border-b border-[#d9dee4] bg-white/86 backdrop-blur-xl">
             <div className="flex min-h-[76px] flex-col gap-3 px-4 py-3 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
               <div className="min-w-0">
@@ -410,55 +412,29 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
             </div>
           </header>
 
-          <div className="grid flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="min-w-0 px-4 py-5 sm:px-6">
-              <div className="conversation-panel animate-workspace-in">
-                {error && <p className="dm-error">{error}</p>}
+          <div className="chat-main min-w-0 flex-1 px-4 py-5 sm:px-6">
+            <div className="conversation-panel animate-workspace-in">
+              {error && <p className="dm-error">{error}</p>}
 
-                {activeParticipant ? (
-                  <DirectConversationPanel
-                    draft={messageDraft}
-                    draftText={messageDraftText}
-                    isSending={isSending}
-                    messages={messages}
-                    onDraftChange={(html, text) => {
-                      setMessageDraft(html);
-                      setMessageDraftText(text);
-                    }}
-                    onSubmit={handleComposerSubmit}
-                    participant={activeParticipant}
-                    socketStatus={socketStatus}
-                    user={user}
-                  />
-                ) : (
-                  <EmptyDirectState hasQuery={Boolean(query.trim())} />
-                )}
-              </div>
+              {activeParticipant ? (
+                <DirectConversationPanel
+                  draft={messageDraft}
+                  draftText={messageDraftText}
+                  isSending={isSending}
+                  messages={messages}
+                  onDraftChange={(html, text) => {
+                    setMessageDraft(html);
+                    setMessageDraftText(text);
+                  }}
+                  onSubmit={handleComposerSubmit}
+                  participant={activeParticipant}
+                  socketStatus={socketStatus}
+                  user={user}
+                />
+              ) : (
+                <EmptyDirectState hasQuery={Boolean(query.trim())} />
+              )}
             </div>
-
-            <aside className="right-panel border-t border-[#d9dee4] bg-[#f8fafb] px-4 py-5 sm:px-6 xl:border-l xl:border-t-0">
-              <div className="space-y-5">
-                <PanelBlock eyebrow="Workspace" title={user.workspaceName}>
-                  <div className="grid gap-2">
-                    <Metric label="Direct threads" value={String(conversations.length)} tone="green" />
-                    <Metric label="Search scope" value="1" tone="blue" />
-                  </div>
-                </PanelBlock>
-
-                <PanelBlock eyebrow="Connection" title={socketStatusLabel(socketStatus)}>
-                  <div className="space-y-3 text-sm font-semibold leading-6 text-[#606975]">
-                    <p>{socketStatusHelp(socketStatus)}</p>
-                  </div>
-                </PanelBlock>
-
-                <PanelBlock eyebrow="DM model" title="Realtime-ready">
-                  <div className="space-y-3 text-sm font-semibold leading-6 text-[#606975]">
-                    <p>Conversations have members now, so sockets can later join a room by conversation id.</p>
-                    <p>Messages are tied to a sender and conversation, leaving channel support open without changing the DM contract.</p>
-                  </div>
-                </PanelBlock>
-              </div>
-            </aside>
           </div>
         </section>
       </div>
@@ -563,7 +539,9 @@ function DirectConversationPanel({
     bold: false,
     italic: false,
     underline: false,
-    strikeThrough: false
+    strikeThrough: false,
+    insertUnorderedList: false,
+    insertOrderedList: false
   });
 
   useEffect(() => {
@@ -585,12 +563,7 @@ function DirectConversationPanel({
         return;
       }
 
-      setActiveMarks({
-        bold: document.queryCommandState('bold'),
-        italic: document.queryCommandState('italic'),
-        underline: document.queryCommandState('underline'),
-        strikeThrough: document.queryCommandState('strikeThrough')
-      });
+      setActiveMarks(getActiveEditorCommands());
     };
 
     document.addEventListener('selectionchange', updateActiveMarks);
@@ -660,20 +633,6 @@ function DirectConversationPanel({
       </div>
 
       <form className="composer-shell" onSubmit={onSubmit}>
-        <div className="composer-toolbar" aria-label="Message formatting tools">
-          {TEXT_FORMAT_OPTIONS.map((option) => (
-            <button
-              className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
-              key={option.title}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => toggleEditorCommand(editorRef.current, option.command, syncEditorDraft)}
-              title={option.title}
-              type="button"
-            >
-              <span className={`composer-tool-${option.title.toLowerCase()}`}>{option.label}</span>
-            </button>
-          ))}
-        </div>
         <div className="dm-composer-input">
           <div
             aria-label={`Message ${participant.name}`}
@@ -688,7 +647,25 @@ function DirectConversationPanel({
           />
         </div>
         <div className="composer-footer">
-          <span className="text-xs font-bold text-[#707984]">{socketStatusLabel(socketStatus)} - {draftText.length}/4000</span>
+          <div className="composer-toolbar" aria-label="Message formatting tools">
+            {TEXT_FORMAT_OPTIONS.map((option) => (
+              <button
+                aria-pressed={activeMarks[option.command]}
+                className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
+                key={option.title}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  toggleEditorCommand(editorRef.current, option.command, syncEditorDraft);
+                  setActiveMarks(getActiveEditorCommands());
+                }}
+                title={option.title}
+                type="button"
+              >
+                <span className={`composer-tool-${option.styleClass}`}>{option.label}</span>
+              </button>
+            ))}
+          </div>
+          <span className="composer-meta">{socketStatusLabel(socketStatus)} - {draftText.length}/4000</span>
           <button className="send-button" disabled={isSending || !draftText.trim() || draft.length > 4000 || socketStatus !== 'connected'} type="submit">{isSending ? 'Sending...' : 'Send'}</button>
         </div>
       </form>
@@ -745,25 +722,6 @@ function Avatar({ initials, size = 'md', tone = 'default', status }: AvatarProps
       {initials}
       {status && <span className={`avatar-status presence-${status}`} />}
     </span>
-  );
-}
-
-function PanelBlock({ eyebrow, title, children }: { eyebrow: string; title: string; children: ReactNode }) {
-  return (
-    <section className="panel-block">
-      <p className="text-xs font-black uppercase tracking-[0.14em] text-[#707984]">{eyebrow}</p>
-      <h2 className="mt-1 text-lg font-black">{title}</h2>
-      <div className="mt-4">{children}</div>
-    </section>
-  );
-}
-
-function Metric({ label, value, tone }: { label: string; value: string; tone: 'green' | 'pink' | 'blue' }) {
-  return (
-    <div className={`metric-card metric-${tone}`}>
-      <p>{value}</p>
-      <span>{label}</span>
-    </div>
   );
 }
 
@@ -835,6 +793,17 @@ function toggleEditorCommand(editor: HTMLDivElement | null, command: TextFormatC
   editor.focus();
   document.execCommand(command);
   onChange();
+}
+
+function getActiveEditorCommands(): Record<TextFormatCommand, boolean> {
+  return {
+    bold: document.queryCommandState('bold'),
+    italic: document.queryCommandState('italic'),
+    underline: document.queryCommandState('underline'),
+    strikeThrough: document.queryCommandState('strikeThrough'),
+    insertUnorderedList: document.queryCommandState('insertUnorderedList'),
+    insertOrderedList: document.queryCommandState('insertOrderedList')
+  };
 }
 
 function escapeHtml(content: string) {
