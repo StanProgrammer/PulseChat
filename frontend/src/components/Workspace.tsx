@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type {
   ClipboardEvent,
   FormEvent,
@@ -367,7 +367,7 @@ function DirectConversationPanel({
     setIsEmojiPopoverOpen((current) => !current);
   };
 
-  const insertEmoji = (emoji: string) => {
+  const insertEmoji = useCallback((emoji: string) => {
     const editor = editorRef.current;
 
     if (!editor) {
@@ -378,25 +378,30 @@ function DirectConversationPanel({
     insertTextAtSavedSelection(editor, savedSelectionRef, emoji);
     syncEditorDraft();
     setIsEmojiPopoverOpen(false);
-  };
+  }, []);
 
-  const handleEmojiSelect = (emojiData: SelectedEmoji) => {
+  const handleCloseEmojiPopover = useCallback(() => {
+    setIsEmojiPopoverOpen(false);
+    editorRef.current?.focus();
+  }, []);
+
+  const handleEmojiSelect = useCallback((emojiData: SelectedEmoji) => {
     insertEmoji(emojiData.native);
     setRecentEmojis((current) => {
       const next = updateRecentEmojis(current, emojiData);
       persistRecentEmojis(next);
       return next;
     });
-  };
+  }, [insertEmoji]);
 
-  const handleRecentEmojiInsert = (emoji: RecentEmoji) => {
+  const handleRecentEmojiInsert = useCallback((emoji: RecentEmoji) => {
     insertEmoji(emoji.emoji);
     setRecentEmojis((current) => {
       const next = [emoji, ...current.filter((item) => item.unified !== emoji.unified)].slice(0, MAX_RECENT_EMOJIS);
       persistRecentEmojis(next);
       return next;
     });
-  };
+  }, [insertEmoji]);
 
   const insertLink = () => {
     const href = normalizeLinkUrl(linkDraft.url);
@@ -568,10 +573,7 @@ function DirectConversationPanel({
           {isEmojiPopoverOpen && (
             <EmojiPickerPopover
               id={EMOJI_PICKER_ID}
-              onClose={() => {
-                setIsEmojiPopoverOpen(false);
-                editorRef.current?.focus();
-              }}
+              onClose={handleCloseEmojiPopover}
               onEmojiSelect={handleEmojiSelect}
               onRecentEmojiSelect={handleRecentEmojiInsert}
               recentEmojis={recentEmojis}
