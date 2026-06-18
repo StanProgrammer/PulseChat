@@ -11,6 +11,7 @@ import EmojiPickerPopover from './workspace/EmojiPickerPopover';
 import {
   findClosestLink,
   getActiveEditorCommands,
+  handleListEnterKey,
   insertCodeBlock,
   insertTextAtSavedSelection,
   toggleEditorCommand,
@@ -179,6 +180,8 @@ function DirectConversationPanel({
   const composerRef = useRef<HTMLFormElement | null>(null);
   const savedSelectionRef = useRef<Range | null>(null);
   const linkTextInputRef = useRef<HTMLInputElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const pendingAutoScrollRef = useRef(false);
   const [activeMarks, setActiveMarks] = useState<Record<TextFormatCommand, boolean>>({
     bold: false,
     italic: false,
@@ -192,6 +195,34 @@ function DirectConversationPanel({
   const [isEmojiPopoverOpen, setIsEmojiPopoverOpen] = useState(false);
   const [linkDraft, setLinkDraft] = useState({ text: '', url: '', error: '' });
   const [recentEmojis, setRecentEmojis] = useState<RecentEmoji[]>(() => loadRecentEmojis());
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  // Flag pending scroll when switching conversations
+  useEffect(() => {
+    pendingAutoScrollRef.current = true;
+  }, [participant.id]);
+
+  useEffect(() => {
+    if (!scrollRef.current || !messages.length) return;
+
+    if (pendingAutoScrollRef.current) {
+      scrollToBottom();
+      pendingAutoScrollRef.current = false;
+      return;
+    }
+
+    const el = scrollRef.current;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+
+    if (isNearBottom) {
+      scrollToBottom();
+    }
+  }, [messages, scrollToBottom]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -281,6 +312,33 @@ function DirectConversationPanel({
     }
 
     savedSelectionRef.current = range.cloneRange();
+  };
+
+  const handleEditorKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+
+    const editor = editorRef.current;
+    const shouldSendMessage = !event.shiftKey || event.ctrlKey || event.metaKey;
+
+    if (shouldSendMessage) {
+      event.preventDefault();
+      composerRef.current?.requestSubmit();
+      return;
+    }
+
+    if (editor && handleListEnterKey(editor)) {
+      event.preventDefault();
+      syncEditorDraft();
+      saveEditorSelection();
+      setActiveMarks(getActiveEditorCommands());
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      syncEditorDraft();
+      saveEditorSelection();
+      setActiveMarks(getActiveEditorCommands());
+    });
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
@@ -462,7 +520,7 @@ function DirectConversationPanel({
         <span className="channel-meta-pill">Same workspace</span>
       </div>
 
-      <div className="conversation-stream">
+      <div className="conversation-stream" ref={scrollRef}>
         <DateDivider label="Today" />
         {messages.length ? (
           messages.map((message, index) => {
@@ -490,7 +548,10 @@ function DirectConversationPanel({
         )}
       </div>
 
-      <form className="composer-shell" onSubmit={onSubmit} ref={composerRef}>
+      <form className="composer-shell" onSubmit={(event) => {
+        pendingAutoScrollRef.current = true;
+        onSubmit(event);
+      }} ref={composerRef}>
         <div className="dm-composer-input">
           <div
             aria-label={`Message ${participant.name}`}
@@ -502,6 +563,7 @@ function DirectConversationPanel({
             onInput={syncEditorDraft}
             onKeyUp={saveEditorSelection}
             onMouseUp={saveEditorSelection}
+            onKeyDown={handleEditorKeyDown}
             onPaste={handlePaste}
             ref={editorRef}
             role="textbox"

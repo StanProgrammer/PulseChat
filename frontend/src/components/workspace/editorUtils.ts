@@ -221,3 +221,117 @@ export function findClosestLink(node: Node | null, editor: HTMLDivElement) {
 
   return null;
 }
+
+export function handleListEnterKey(editor: HTMLDivElement) {
+  const selection = window.getSelection();
+
+  if (!selection?.rangeCount) {
+    return false;
+  }
+
+  const range = selection.getRangeAt(0);
+
+  if (!editor.contains(range.commonAncestorContainer)) {
+    return false;
+  }
+
+  const listItem = findClosestListItem(range.commonAncestorContainer, editor);
+
+  if (!listItem) {
+    return false;
+  }
+
+  if (!range.collapsed) {
+    range.deleteContents();
+  }
+
+  if (isListItemEmpty(listItem)) {
+    exitListItem(listItem, selection);
+    return true;
+  }
+
+  splitListItem(listItem, range, selection);
+  return true;
+}
+
+function findClosestListItem(node: Node | null, editor: HTMLDivElement) {
+  let current = node;
+
+  while (current && current.nodeType === Node.TEXT_NODE) {
+    current = current.parentNode;
+  }
+
+  while (current && current !== editor) {
+    if (current instanceof HTMLLIElement) {
+      return current;
+    }
+
+    current = current.parentNode;
+  }
+
+  return null;
+}
+
+function isListItemEmpty(listItem: HTMLLIElement) {
+  const clone = listItem.cloneNode(true) as HTMLLIElement;
+  clone.querySelectorAll('ul, ol').forEach((nestedList) => nestedList.remove());
+
+  return (clone.textContent || '').replace(/\u200B/g, '').trim().length === 0;
+}
+
+function splitListItem(listItem: HTMLLIElement, range: Range, selection: Selection) {
+  const nextItem = document.createElement('li');
+  const afterCursorRange = document.createRange();
+
+  afterCursorRange.setStart(range.startContainer, range.startOffset);
+  afterCursorRange.setEnd(listItem, listItem.childNodes.length);
+
+  const trailingContent = afterCursorRange.extractContents();
+  if (hasRenderableContent(trailingContent)) {
+    nextItem.appendChild(trailingContent);
+  } else {
+    nextItem.appendChild(document.createElement('br'));
+  }
+
+  listItem.parentNode?.insertBefore(nextItem, listItem.nextSibling);
+  placeCursorAtStart(nextItem, selection);
+}
+
+function exitListItem(listItem: HTMLLIElement, selection: Selection) {
+  const list = listItem.parentElement;
+
+  if (!(list instanceof HTMLOListElement || list instanceof HTMLUListElement) || !list.parentNode) {
+    return;
+  }
+
+  const paragraph = document.createElement('p');
+  paragraph.appendChild(document.createElement('br'));
+
+  list.parentNode.insertBefore(paragraph, list.nextSibling);
+  listItem.remove();
+
+  if (!list.querySelector('li')) {
+    list.remove();
+  }
+
+  placeCursorAtStart(paragraph, selection);
+}
+
+function placeCursorAtStart(element: HTMLElement, selection: Selection) {
+  const range = document.createRange();
+  range.setStart(element, 0);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function hasRenderableContent(fragment: DocumentFragment) {
+  const container = document.createElement('div');
+  container.appendChild(fragment.cloneNode(true));
+
+  if ((container.textContent || '').replace(/\u200B/g, '').trim()) {
+    return true;
+  }
+
+  return Boolean(container.querySelector('img, br, ul, ol, pre, code, a'));
+}
