@@ -11,8 +11,10 @@ import EmojiPickerPopover from './workspace/EmojiPickerPopover';
 import {
   findClosestLink,
   getActiveEditorCommands,
+  insertCodeBlock,
   insertTextAtSavedSelection,
   toggleEditorCommand,
+  toggleInlineCode,
   type TextFormatCommand
 } from './workspace/editorUtils';
 import {
@@ -51,6 +53,8 @@ const TEXT_FORMAT_OPTIONS = [
   { label: 'UL', title: 'Bulleted list', command: 'insertUnorderedList', styleClass: 'unordered-list' },
   { label: 'OL', title: 'Numbered list', command: 'insertOrderedList', styleClass: 'ordered-list' }
 ] as const;
+const CODE_FORMAT_OPTION = { label: '<>', title: 'Inline code' } as const;
+const CODE_BLOCK_OPTION = { label: 'pre', title: 'Code block' } as const;
 const LINK_FORMAT_OPTION = { label: 'Link', title: 'Insert link' };
 const EMOJI_FORMAT_OPTION = { label: 'Emoji', title: 'Insert emoji' };
 const EMOJI_PICKER_ID = 'composer-emoji-picker';
@@ -181,7 +185,8 @@ function DirectConversationPanel({
     underline: false,
     strikeThrough: false,
     insertUnorderedList: false,
-    insertOrderedList: false
+    insertOrderedList: false,
+    code: false
   });
   const [isLinkPopoverOpen, setIsLinkPopoverOpen] = useState(false);
   const [isEmojiPopoverOpen, setIsEmojiPopoverOpen] = useState(false);
@@ -521,6 +526,30 @@ function DirectConversationPanel({
                 <span className={`composer-tool-${option.styleClass}`}>{option.label}</span>
               </button>
             ))}
+            <button
+              aria-pressed={activeMarks.code}
+              className={`composer-tool composer-tool-code ${activeMarks.code ? 'composer-tool-active' : ''}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                toggleInlineCode(editorRef.current, syncEditorDraft);
+                setActiveMarks(getActiveEditorCommands());
+              }}
+              title={CODE_FORMAT_OPTION.title}
+              type="button"
+            >
+              {CODE_FORMAT_OPTION.label}
+            </button>
+            <button
+              className="composer-tool composer-tool-code-block"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                insertCodeBlock(editorRef.current, syncEditorDraft);
+              }}
+              title={CODE_BLOCK_OPTION.title}
+              type="button"
+            >
+              {CODE_BLOCK_OPTION.label}
+            </button>
             <button
               aria-expanded={isLinkPopoverOpen}
               className={`composer-tool composer-tool-link ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}

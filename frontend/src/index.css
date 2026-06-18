@@ -480,6 +480,27 @@ button:focus-visible {
   padding: 0 0.46rem;
 }
 
+.composer-tool-code {
+  width: auto;
+  min-width: 2.35rem;
+  padding: 0 0.3rem;
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+.composer-tool-code-block {
+  width: auto;
+  min-width: 2.35rem;
+  padding: 0 0.32rem;
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+  font-weight: 700;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
 .composer-tool-emoji {
   width: auto;
   min-width: 3.25rem;
@@ -1363,6 +1384,26 @@ button:focus-visible {
   font-weight: 800;
 }
 
+.dm-composer-editor pre {
+  margin: 0.42rem 0;
+  border: 1px solid #dce2e7;
+  border-radius: 0.62rem;
+  background: #f4f6f8;
+  padding: 0.72rem 0.85rem;
+  overflow-x: auto;
+}
+
+.dm-composer-editor pre code {
+  display: block;
+  background: transparent;
+  padding: 0;
+  color: #343940;
+  font-size: 0.85em;
+  font-weight: 700;
+  line-height: 1.65;
+  white-space: pre;
+}
+
 .dm-composer-input:focus-within {
   border-color: #611f69;
   box-shadow: 0 -1px 0 #611f69, -1px 0 0 #611f69, 1px 0 0 #611f69;
@@ -1532,6 +1573,25 @@ button:focus-visible {
   padding: 0.1rem 0.28rem;
   font-size: 0.9em;
   font-weight: 800;
+}
+
+.message-content pre {
+  margin: 0.58rem 0;
+  border: 1px solid #e0e5e9;
+  border-radius: 0.62rem;
+  background: #f6f8fa;
+  padding: 0.72rem 0.85rem;
+  overflow-x: auto;
+}
+
+.message-content pre code {
+  display: block;
+  background: transparent;
+  padding: 0;
+  font-size: 0.88em;
+  font-weight: 700;
+  line-height: 1.65;
+  white-space: pre;
 }
 
 .message-status {
