@@ -1,7 +1,13 @@
-import type { EmojiClickData } from 'emoji-picker-react';
-
 const RECENT_EMOJIS_STORAGE_KEY = 'chat-app:recent-emojis';
 export const MAX_RECENT_EMOJIS = 18;
+
+export type SelectedEmoji = {
+  native: string;
+  unified?: string;
+  id?: string;
+  name?: string;
+  shortcodes?: string;
+};
 
 export type RecentEmoji = {
   emoji: string;
@@ -28,14 +34,15 @@ export function persistRecentEmojis(emojis: RecentEmoji[]) {
   window.localStorage.setItem(RECENT_EMOJIS_STORAGE_KEY, JSON.stringify(emojis.slice(0, MAX_RECENT_EMOJIS)));
 }
 
-export function updateRecentEmojis(current: RecentEmoji[], emojiData: Pick<EmojiClickData, 'emoji' | 'unified' | 'names'>) {
+export function updateRecentEmojis(current: RecentEmoji[], emojiData: SelectedEmoji) {
+  const unified = emojiData.unified || emojiData.id || emojiData.native;
   const nextEmoji: RecentEmoji = {
-    emoji: emojiData.emoji,
-    unified: emojiData.unified,
-    name: emojiData.names[0] || 'emoji'
+    emoji: emojiData.native,
+    unified,
+    name: emojiData.name || emojiData.shortcodes?.replace(/:/g, '') || 'emoji'
   };
 
-  return [nextEmoji, ...current.filter((item) => item.unified !== emojiData.unified)].slice(0, MAX_RECENT_EMOJIS);
+  return [nextEmoji, ...current.filter((item) => item.unified !== unified)].slice(0, MAX_RECENT_EMOJIS);
 }
 
 function isRecentEmoji(value: unknown): value is RecentEmoji {

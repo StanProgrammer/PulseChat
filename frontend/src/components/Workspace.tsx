@@ -1,13 +1,13 @@
-import { Suspense, lazy, memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import type {
   ClipboardEvent,
   FormEvent,
   KeyboardEvent
 } from 'react';
-import type { CategoryConfig, EmojiClickData, EmojiStyle, SkinTonePickerLocation, SuggestionMode, Theme } from 'emoji-picker-react';
 import type { Teammate } from '../api/messaging';
 import type { User } from '../types/auth';
 import Avatar from './workspace/Avatar';
+import EmojiPickerPopover from './workspace/EmojiPickerPopover';
 import {
   findClosestLink,
   getActiveEditorCommands,
@@ -32,7 +32,8 @@ import {
   MAX_RECENT_EMOJIS,
   persistRecentEmojis,
   updateRecentEmojis,
-  type RecentEmoji
+  type RecentEmoji,
+  type SelectedEmoji
 } from './workspace/recentEmojis';
 
 type WorkspaceProps = {
@@ -52,19 +53,7 @@ const TEXT_FORMAT_OPTIONS = [
 ] as const;
 const LINK_FORMAT_OPTION = { label: 'Link', title: 'Insert link' };
 const EMOJI_FORMAT_OPTION = { label: 'Emoji', title: 'Insert emoji' };
-const EmojiPicker = lazy(() => import('emoji-picker-react'));
 const EMOJI_PICKER_ID = 'composer-emoji-picker';
-const EMOJI_PICKER_CATEGORIES: CategoryConfig[] = [
-  { category: 'suggested' as CategoryConfig['category'], name: 'Frequently used', icon: <span aria-hidden="true">🕘</span> },
-  { category: 'smileys_people' as CategoryConfig['category'], name: 'Smileys & people', icon: <span aria-hidden="true">😀</span> },
-  { category: 'animals_nature' as CategoryConfig['category'], name: 'Animals & nature', icon: <span aria-hidden="true">🐻</span> },
-  { category: 'food_drink' as CategoryConfig['category'], name: 'Food & drink', icon: <span aria-hidden="true">🍕</span> },
-  { category: 'activities' as CategoryConfig['category'], name: 'Activities', icon: <span aria-hidden="true">⚽</span> },
-  { category: 'travel_places' as CategoryConfig['category'], name: 'Travel & places', icon: <span aria-hidden="true">✈️</span> },
-  { category: 'objects' as CategoryConfig['category'], name: 'Objects', icon: <span aria-hidden="true">💡</span> },
-  { category: 'symbols' as CategoryConfig['category'], name: 'Symbols', icon: <span aria-hidden="true">❤️</span> },
-  { category: 'flags' as CategoryConfig['category'], name: 'Flags', icon: <span aria-hidden="true">🏳️</span> }
-];
 
 function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   const {
@@ -391,8 +380,8 @@ function DirectConversationPanel({
     setIsEmojiPopoverOpen(false);
   };
 
-  const handleEmojiSelect = (emojiData: EmojiClickData) => {
-    insertEmoji(emojiData.emoji);
+  const handleEmojiSelect = (emojiData: SelectedEmoji) => {
+    insertEmoji(emojiData.native);
     setRecentEmojis((current) => {
       const next = updateRecentEmojis(current, emojiData);
       persistRecentEmojis(next);
@@ -577,55 +566,16 @@ function DirectConversationPanel({
             </div>
           )}
           {isEmojiPopoverOpen && (
-            <div
-              aria-label="Insert emoji"
-              className="emoji-popover"
+            <EmojiPickerPopover
               id={EMOJI_PICKER_ID}
-              onMouseDown={(event) => event.stopPropagation()}
-              role="dialog"
-            >
-              {recentEmojis.length > 0 && (
-                <section aria-label="Recently used emojis" className="emoji-recents">
-                  <div className="emoji-recents-header">
-                    <p>Recently used</p>
-                    <span>{recentEmojis.length}</span>
-                  </div>
-                  <div className="emoji-recents-row">
-                    {recentEmojis.map((item) => (
-                      <button
-                        aria-label={`Insert ${item.name}`}
-                        className="emoji-recent-button"
-                        key={item.unified}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => handleRecentEmojiInsert(item)}
-                        type="button"
-                      >
-                        <span aria-hidden="true">{item.emoji}</span>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              )}
-              <div className="emoji-picker-shell">
-                <Suspense fallback={<div className="emoji-picker-loading">Loading emoji picker…</div>}>
-                  <EmojiPicker
-                    autoFocusSearch
-                    categories={EMOJI_PICKER_CATEGORIES}
-                    className="composer-emoji-picker"
-                    emojiStyle={'native' as EmojiStyle}
-                    height="100%"
-                    lazyLoadEmojis
-                    onEmojiClick={handleEmojiSelect}
-                    previewConfig={{ defaultCaption: 'Pick a reaction for your message', showPreview: true }}
-                    searchPlaceholder="Search emoji"
-                    skinTonePickerLocation={'SEARCH' as SkinTonePickerLocation}
-                    suggestedEmojisMode={'frequent' as SuggestionMode}
-                    theme={'light' as Theme}
-                    width="100%"
-                  />
-                </Suspense>
-              </div>
-            </div>
+              onClose={() => {
+                setIsEmojiPopoverOpen(false);
+                editorRef.current?.focus();
+              }}
+              onEmojiSelect={handleEmojiSelect}
+              onRecentEmojiSelect={handleRecentEmojiInsert}
+              recentEmojis={recentEmojis}
+            />
           )}
           <span className="composer-meta">{socketStatusLabel(socketStatus)} - {draftText.length}/4000</span>
           <button className="send-button" disabled={isSending || !draftText.trim() || draft.length > 4000 || socketStatus !== 'connected'} type="submit">{isSending ? 'Sending...' : 'Send'}</button>
