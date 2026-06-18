@@ -50,8 +50,8 @@ const TEXT_FORMAT_OPTIONS = [
   { label: 'I', title: 'Italic', command: 'italic', styleClass: 'italic' },
   { label: 'U', title: 'Underline', command: 'underline', styleClass: 'underline' },
   { label: 'S', title: 'Strikethrough', command: 'strikeThrough', styleClass: 'strikethrough' },
-  { label: 'UL', title: 'Bulleted list', command: 'insertUnorderedList', styleClass: 'unordered-list' },
-  { label: 'OL', title: 'Numbered list', command: 'insertOrderedList', styleClass: 'ordered-list' }
+  { label: '\u2022', title: 'Bulleted list', command: 'insertUnorderedList', styleClass: 'unordered-list' },
+  { label: '1.', title: 'Numbered list', command: 'insertOrderedList', styleClass: 'ordered-list' }
 ] as const;
 const CODE_FORMAT_OPTION = { label: '<>', title: 'Inline code' } as const;
 const CODE_BLOCK_OPTION = { label: 'pre', title: 'Code block' } as const;
@@ -526,6 +526,9 @@ function DirectConversationPanel({
                 <span className={`composer-tool-${option.styleClass}`}>{option.label}</span>
               </button>
             ))}
+
+            <span aria-hidden="true" className="composer-toolbar-divider" />
+
             <button
               aria-pressed={activeMarks.code}
               className={`composer-tool composer-tool-code ${activeMarks.code ? 'composer-tool-active' : ''}`}
@@ -550,6 +553,9 @@ function DirectConversationPanel({
             >
               {CODE_BLOCK_OPTION.label}
             </button>
+
+            <span aria-hidden="true" className="composer-toolbar-divider" />
+
             <button
               aria-expanded={isLinkPopoverOpen}
               className={`composer-tool composer-tool-link ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}
