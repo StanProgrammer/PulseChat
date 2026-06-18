@@ -46,6 +46,8 @@ export function formatMessageTime(date: string) {
   }).format(new Date(date));
 }
 
+const MAX_PREVIEW_LENGTH = 100;
+
 export function formatMessagePreview(content: string) {
   if (!content.trim()) {
     return '';
@@ -53,7 +55,17 @@ export function formatMessagePreview(content: string) {
 
   const element = document.createElement('div');
   element.innerHTML = sanitizeMessageHtml(content);
-  return element.textContent?.trim() || 'Rich text message';
+  const text = element.textContent?.trim() || 'Rich text message';
+
+  if (text.length <= MAX_PREVIEW_LENGTH) {
+    return text;
+  }
+
+  // Cut at a word boundary for a clean preview
+  const truncated = text.slice(0, MAX_PREVIEW_LENGTH);
+  const lastSpace = truncated.lastIndexOf(' ');
+  const cutoff = lastSpace > MAX_PREVIEW_LENGTH * 0.7 ? lastSpace : MAX_PREVIEW_LENGTH;
+  return truncated.slice(0, cutoff).trimEnd() + '…';
 }
 
 export function sanitizeMessageHtml(content: string) {

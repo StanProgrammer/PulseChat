@@ -1096,6 +1096,7 @@ button:focus-visible {
 .channel-row,
 .dm-row {
   display: flex;
+  min-width: 0;
   min-height: 3.35rem;
   align-items: center;
   gap: 0.7rem;
