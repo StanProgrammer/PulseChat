@@ -36,6 +36,7 @@ services:
     volumes:
       - ./backend:/usr/src/app
       - /usr/src/app/node_modules
+      - upload-data:/usr/src/app/uploads
     command: npm run start:dev
 
   frontend:
@@ -57,3 +58,4 @@ services:
 
 volumes:
   db-data:
+  upload-data:

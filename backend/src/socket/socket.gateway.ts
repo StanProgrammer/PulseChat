@@ -23,6 +23,7 @@ type SendMessagePayload = {
   conversationId?: string;
   content?: string;
   clientMessageId?: string;
+  attachmentIds?: string[];
 };
 
 @WebSocketGateway({
@@ -88,14 +89,15 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async sendMessage(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() payload: SendMessagePayload) {
     const user = this.requireSocketUser(client);
     const conversationId = payload?.conversationId;
-    const content = payload?.content;
+    const content = payload?.content || '';
+    const attachmentIds = payload?.attachmentIds;
 
-    if (!conversationId || !content) {
-      return { ok: false, message: 'Conversation id and message content are required.' };
+    if (!conversationId || (!content.trim() && (!attachmentIds || attachmentIds.length === 0))) {
+      return { ok: false, message: 'Conversation id and message content or attachments are required.' };
     }
 
     try {
-      const { message } = await this.messagingService.sendMessage(user.sub, conversationId, content);
+      const { message } = await this.messagingService.sendMessage(user.sub, conversationId, content, attachmentIds);
       const memberIds = await this.messagingService.getConversationMemberIds(user.sub, conversationId);
 
       this.server.to(this.conversationRoom(conversationId)).emit('message:new', {

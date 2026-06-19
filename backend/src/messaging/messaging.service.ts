@@ -2,6 +2,16 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { ConversationType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
+const attachmentFields = {
+  id: true,
+  fileName: true,
+  originalName: true,
+  mimeType: true,
+  size: true,
+  url: true,
+  createdAt: true
+} satisfies Prisma.AttachmentSelect;
+
 const userSummarySelect = {
   id: true,
   name: true,
@@ -9,6 +19,11 @@ const userSummarySelect = {
   avatar: true,
   workspaceName: true
 } satisfies Prisma.UserSelect;
+
+const messageInclude = {
+  sender: { select: userSummarySelect },
+  attachments: { select: attachmentFields, orderBy: { createdAt: 'asc' as const } }
+} satisfies Prisma.MessageInclude;
 
 const conversationInclude = {
   members: {
@@ -18,9 +33,7 @@ const conversationInclude = {
     orderBy: { joinedAt: 'asc' as const }
   },
   messages: {
-    include: {
-      sender: { select: userSummarySelect }
-    },
+    include: messageInclude,
     orderBy: { createdAt: 'desc' as const },
     take: 1
   }
@@ -110,9 +123,7 @@ export class MessagingService {
 
     const messages = await this.prisma.message.findMany({
       where: { conversationId },
-      include: {
-        sender: { select: userSummarySelect }
-      },
+      include: messageInclude,
       orderBy: { createdAt: 'asc' },
       take: 80
     });
@@ -120,13 +131,15 @@ export class MessagingService {
     return { messages: messages.map((message) => this.toMessage(message)) };
   }
 
-  async sendMessage(currentUserId: string, conversationId: string, content: string) {
+
+
+  async sendMessage(currentUserId: string, conversationId: string, content: string, attachmentIds?: string[]) {
     await this.ensureConversationMember(currentUserId, conversationId);
 
     const trimmedContent = content.trim();
     const plainContent = trimmedContent.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
 
-    if (!plainContent) {
+    if (!plainContent && (!attachmentIds || attachmentIds.length === 0)) {
       throw new BadRequestException('Message cannot be empty.');
     }
 
@@ -138,11 +151,12 @@ export class MessagingService {
       data: {
         conversationId,
         senderId: currentUserId,
-        content: trimmedContent
+        content: trimmedContent,
+        attachments: attachmentIds?.length
+          ? { connect: attachmentIds.map((id) => ({ id })) }
+          : undefined
       },
-      include: {
-        sender: { select: userSummarySelect }
-      }
+      include: messageInclude
     });
 
     await this.prisma.conversation.update({
@@ -250,13 +264,14 @@ export class MessagingService {
     };
   }
 
-  private toMessage(message: MessageWithSender) {
+  private toMessage(message: MessageWithAttachments) {
     return {
       id: message.id,
       content: message.content,
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
-      sender: message.sender
+      sender: message.sender,
+      attachments: message.attachments
     };
   }
 
@@ -266,10 +281,6 @@ type ConversationWithMembers = Prisma.ConversationGetPayload<{
   include: typeof conversationInclude;
 }>;
 
-type MessageWithSender = Prisma.MessageGetPayload<{
-  include: {
-    sender: {
-      select: typeof userSummarySelect;
-    };
-  };
+type MessageWithAttachments = Prisma.MessageGetPayload<{
+  include: typeof messageInclude;
 }>;

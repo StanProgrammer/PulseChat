@@ -6,6 +6,7 @@ import {
   listDirectMessages,
   searchWorkspaceUsers,
   startDirectConversation,
+  type AttachmentInfo,
   type DirectConversation,
   type Teammate
 } from '../../api/messaging';
@@ -212,16 +213,17 @@ export function useDirectMessaging(accessToken: string, user: User) {
     setDraftText(text);
   }, []);
 
-  const sendMessage = useCallback((event: FormEvent<HTMLFormElement>) => {
+  const sendMessage = useCallback((event: FormEvent<HTMLFormElement>, options?: { attachmentIds?: string[]; pendingAttachments?: AttachmentInfo[] }) => {
     event.preventDefault();
 
-    if (!activeConversation?.id || !draftText.trim()) {
+    if (!activeConversation?.id || (!draftText.trim() && (!options?.attachmentIds || options.attachmentIds.length === 0))) {
       return;
     }
 
     const content = sanitizeMessageHtml(draftHtml);
     const clientMessageId = createClientMessageId();
     const timestamp = new Date().toISOString();
+    const optimisticAttachments = options?.pendingAttachments || [];
     const optimisticMessage: RealtimeMessage = {
       id: clientMessageId,
       clientMessageId,
@@ -235,7 +237,8 @@ export function useDirectMessaging(accessToken: string, user: User) {
         avatar: user.avatar,
         workspaceName: user.workspaceName
       },
-      status: 'sending'
+      status: 'sending',
+      attachments: optimisticAttachments
     };
 
     setIsSending(true);
@@ -258,7 +261,12 @@ export function useDirectMessaging(accessToken: string, user: User) {
       return;
     }
 
-    socket.emit('message:send', { conversationId: activeConversation.id, content, clientMessageId }, (response) => {
+    socket.emit('message:send', {
+      conversationId: activeConversation.id,
+      content,
+      clientMessageId,
+      attachmentIds: options?.attachmentIds
+    }, (response) => {
       setIsSending(false);
 
       if (!response?.ok) {

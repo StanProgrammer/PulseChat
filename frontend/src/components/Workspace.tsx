@@ -1,10 +1,21 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  ChangeEvent,
   ClipboardEvent,
+  DragEvent,
   FormEvent,
   KeyboardEvent
 } from 'react';
-import type { Teammate } from '../api/messaging';
+import {
+  canPreviewInBrowser,
+  formatFileSize,
+  getFileExtension,
+  uploadFile
+} from '../api/messaging';
+import type {
+  AttachmentInfo,
+  Teammate
+} from '../api/messaging';
 import type { User } from '../types/auth';
 import Avatar from './workspace/Avatar';
 import EmojiPickerPopover from './workspace/EmojiPickerPopover';
@@ -27,7 +38,7 @@ import {
   sanitizeMessageHtml,
   socketStatusLabel
 } from './workspace/messageUtils';
-import type { RealtimeMessage, SocketStatus } from './workspace/types';
+import type { PendingFile, RealtimeMessage, SocketStatus } from './workspace/types';
 import { useDirectMessaging } from './workspace/useDirectMessaging';
 import WorkspaceSidebar from './workspace/WorkspaceSidebar';
 import {
@@ -97,6 +108,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   const activeParticipant = activeConversation?.participant ?? null;
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
 
   // Auto-close sidebar when resizing from desktop to tablet/mobile
   useEffect(() => {
@@ -114,6 +126,122 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     await startConversation(teammate);
     setIsSidebarOpen(false);
   };
+
+  const [fileError, setFileError] = useState('');
+
+  const handleFileSelect = useCallback((files: FileList | null) => {
+    if (!files?.length) return;
+
+    const maxSize = 20 * 1024 * 1024;
+    const newFiles: PendingFile[] = [];
+    let skipped = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+
+      if (file.size > maxSize) {
+        skipped++;
+        continue;
+      }
+
+      const pendingFile: PendingFile = {
+        id: `pending-${Date.now()}-${i}`,
+        file,
+        progress: 0,
+        status: 'pending',
+        previewUrl: file.type.startsWith('image/')
+          ? URL.createObjectURL(file)
+          : undefined
+      };
+
+      newFiles.push(pendingFile);
+    }
+
+    if (skipped > 0) {
+      setFileError(`${skipped} file${skipped > 1 ? 's were' : ' was'} skipped (max 20 MB per file).`);
+      window.setTimeout(() => setFileError(''), 5000);
+    }
+
+    setPendingFiles((current) => [...current, ...newFiles].slice(0, 10));
+  }, []);
+
+  // Clear pending files when switching conversations
+  useEffect(() => {
+    if (pendingFiles.length > 0) {
+      pendingFiles.forEach((f) => {
+        if (f.previewUrl) URL.revokeObjectURL(f.previewUrl);
+      });
+      setPendingFiles([]);
+    }
+  }, [activeConversation?.id]);
+
+  const handleRemoveFile = useCallback((fileId: string) => {
+    setPendingFiles((current) => {
+      const file = current.find((f) => f.id === fileId);
+      if (file?.previewUrl) URL.revokeObjectURL(file.previewUrl);
+      return current.filter((f) => f.id !== fileId);
+    });
+  }, []);
+
+  const handleRetryFile = useCallback(async (fileId: string) => {
+    setPendingFiles((current) =>
+      current.map((f) => f.id === fileId ? { ...f, status: 'pending' as const, progress: 0, error: undefined } : f)
+    );
+  }, []);
+
+  const handleSubmitWithFiles = useCallback(async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!activeConversation?.id || (!draftText.trim() && pendingFiles.length === 0)) {
+      return;
+    }
+
+    // Upload any pending files
+    const attachmentIds: string[] = [];
+    const uploading = pendingFiles.filter((f) => f.status === 'pending' || f.status === 'error');
+
+    for (const pendingFile of uploading) {
+      setPendingFiles((current) =>
+        current.map((f) => f.id === pendingFile.id ? { ...f, status: 'uploading' as const, progress: 0 } : f)
+      );
+
+      try {
+        const result = await uploadFile(accessToken, pendingFile.file, (percent) => {
+          setPendingFiles((current) =>
+            current.map((f) => f.id === pendingFile.id ? { ...f, progress: percent } : f)
+          );
+        });
+
+        attachmentIds.push(result.attachment.id);
+        setPendingFiles((current) =>
+          current.map((f) => f.id === pendingFile.id
+            ? { ...f, status: 'done' as const, progress: 100, attachmentInfo: result.attachment }
+            : f
+          )
+        );
+      } catch (uploadError) {
+        setPendingFiles((current) =>
+          current.map((f) => f.id === pendingFile.id
+            ? { ...f, status: 'error' as const, error: uploadError instanceof Error ? uploadError.message : 'Upload failed.' }
+            : f
+          )
+        );
+        return;
+      }
+    }
+
+    // Collect attachment info for optimistic message
+    const pendingAttachments = pendingFiles
+      .filter((f) => f.status === 'done' && f.attachmentInfo)
+      .map((f) => f.attachmentInfo!);
+
+    setPendingFiles([]);
+
+    // Send the message with attachment IDs via the existing sendMessage function
+    sendMessage(event, { attachmentIds, pendingAttachments });
+  }, [activeConversation, draftHtml, draftText, pendingFiles, sendMessage, socketStatus, user, accessToken]);
+
+
 
   return (
     <main className="workspace-shell min-h-dvh overflow-x-hidden bg-[#eef1f4] text-[#17191c]">
@@ -183,6 +311,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
           <div className="chat-main flex-1 min-h-0 overflow-hidden">
             <div className="flex h-full min-h-0 flex-col px-3 pt-3 pb-0 sm:px-6 sm:pt-5">
               {error && <p className="dm-error mb-3">{error}</p>}
+              {fileError && <p className="dm-error mb-3">{fileError}</p>}
 
               {activeParticipant ? (
                 <div className="conversation-panel flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -209,8 +338,12 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
                 draftText={draftText}
                 isSending={isSending}
                 onDraftChange={updateDraft}
-                onSubmit={sendMessage}
+                onSubmit={handleSubmitWithFiles}
+                onFileSelect={handleFileSelect}
+                onRemoveFile={handleRemoveFile}
+                onRetryFile={handleRetryFile}
                 participant={activeParticipant}
+                pendingFiles={pendingFiles}
                 socketStatus={socketStatus}
               />
             </div>
@@ -297,10 +430,19 @@ function MessageStream({
                     </span>
                   )}
                 </div>
-                <div
-                  className="message-content mt-0.5 text-[0.92rem] leading-6 text-[#343940]"
-                  dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }}
-                />
+                {message.content && (
+                  <div
+                    className="message-content mt-0.5 text-[0.92rem] leading-6 text-[#343940]"
+                    dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }}
+                  />
+                )}
+                {message.attachments && message.attachments.length > 0 && (
+                  <div className="message-attachments">
+                    {message.attachments.map((attachment) => (
+                      <AttachmentCard attachment={attachment} key={attachment.id} />
+                    ))}
+                  </div>
+                )}
               </div>
             </article>
           );
@@ -315,6 +457,121 @@ function MessageStream({
   );
 }
 
+/* ─── File preview chips (compact horizontal layout) ─── */
+
+function truncateFilename(name: string, maxLen: number): string {
+  if (name.length <= maxLen) return name;
+  const ext = name.lastIndexOf('.');
+  if (ext > 0 && name.length - ext < 12) {
+    const base = name.slice(0, ext);
+    const keep = maxLen - (name.length - ext) - 1;
+    if (keep > 4) return `${base.slice(0, keep)}\u2026${name.slice(ext)}`;
+  }
+  return `${name.slice(0, maxLen - 1)}\u2026`;
+}
+
+function statusIcon(status: PendingFile['status']) {
+  switch (status) {
+    case 'pending':
+      return <span className="fpc-status-icon fpc-status-icon-pending" title="Pending upload" />;
+    case 'uploading':
+      return <span className="fpc-status-icon fpc-status-icon-uploading" title="Uploading\u2026" />;
+    case 'done':
+      return (
+        <span className="fpc-status-icon fpc-status-icon-done" title="Uploaded">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 8l3.5 3.5L13 5" />
+          </svg>
+        </span>
+      );
+    case 'error':
+      return (
+        <span className="fpc-status-icon fpc-status-icon-error" title="Upload failed">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 4l8 8m0-8l-8 8" />
+          </svg>
+        </span>
+      );
+  }
+}
+
+function FilePreviewCard({ file, onRemove, onRetry }: { file: PendingFile; onRemove: (id: string) => void; onRetry?: (id: string) => void }) {
+  const isImage = file.file.type.startsWith('image/');
+  const ext = getFileExtension(file.file.name);
+  const isFailed = file.status === 'error';
+  const isUploading = file.status === 'uploading';
+
+  return (
+    <div className={`fpc ${isFailed ? 'fpc-error' : ''} ${isUploading ? 'fpc-uploading' : ''}`}>
+      {/* Remove button */}
+      <button
+        className="fpc-remove"
+        disabled={isUploading}
+        onClick={() => onRemove(file.id)}
+        title="Remove file"
+        type="button"
+      >
+        <svg viewBox="0 0 14 14" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M3 3l8 8m0-8l-8 8" />
+        </svg>
+      </button>
+
+      {/* Thumbnail / file type icon */}
+      {isImage && file.previewUrl ? (
+        <img alt="" className="fpc-thumb" src={file.previewUrl} />
+      ) : (
+        <div className="fpc-icon">
+          <span>{ext.slice(0, 3)}</span>
+        </div>
+      )}
+
+      {/* File info */}
+      <div className="fpc-info">
+        <span className="fpc-name" title={file.file.name}>
+          {truncateFilename(file.file.name, isImage ? 24 : 30)}
+        </span>
+        <span className="fpc-meta">
+          {formatFileSize(file.file.size)}
+          {file.status === 'done' && file.attachmentInfo && (
+            <> \u00b7 Uploaded</>
+          )}
+          {isFailed && file.error && (
+            <> \u00b7 Failed</>
+          )}
+        </span>
+      </div>
+
+      {/* Status indicator */}
+      <div className="fpc-status-area">
+        {statusIcon(file.status)}
+
+        {/* Uploading progress bar (overlaid on card bottom) */}
+        {isUploading && (
+          <div className="fpc-progress-track">
+            <div className="fpc-progress-fill" style={{ width: `${file.progress}%` }} />
+          </div>
+        )}
+      </div>
+
+      {/* Retry button for failed uploads */}
+      {isFailed && onRetry && (
+        <button
+          className="fpc-retry"
+          onClick={() => onRetry(file.id)}
+          title="Retry upload"
+          type="button"
+        >
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 8a6 6 0 0 1 10.47-4M14 8a6 6 0 0 1-10.47 4" />
+            <path d="M13.5 2.5V6h-3.5M2.5 13.5V10H6" />
+          </svg>
+          Retry
+        </button>
+      )}
+    </div>
+  );
+}
+
 /* ─── Message composer (editor, toolbar, popovers) ─── */
 
 function MessageComposer({
@@ -322,20 +579,30 @@ function MessageComposer({
   draft,
   draftText,
   isSending,
+  pendingFiles,
   socketStatus,
   onDraftChange,
+  onFileSelect,
+  onRemoveFile,
+  onRetryFile,
   onSubmit
 }: {
   participant: Teammate;
   draft: string;
   draftText: string;
   isSending: boolean;
+  pendingFiles: PendingFile[];
   socketStatus: SocketStatus;
   onDraftChange: (html: string, text: string) => void;
+  onFileSelect: (files: FileList | null) => void;
+  onRemoveFile: (id: string) => void;
+  onRetryFile: (id: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const savedSelectionRef = useRef<Range | null>(null);
   const linkTextInputRef = useRef<HTMLInputElement | null>(null);
   const [activeMarks, setActiveMarks] = useState<Record<TextFormatCommand, boolean>>({
@@ -536,6 +803,39 @@ function MessageComposer({
     }
   };
 
+  /* ── Drag-and-drop ── */
+
+  const handleDragOver = useCallback((event: DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((event: DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((event: DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragOver(false);
+    onFileSelect(event.dataTransfer.files);
+  }, [onFileSelect]);
+
+  /* ── File picker ── */
+
+  const handleFileButtonClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileInputChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    onFileSelect(event.target.files);
+    // Reset so the same file can be re-selected
+    event.target.value = '';
+  }, [onFileSelect]);
+
   /* ── Emoji popover ── */
 
   const openEmojiPopover = () => {
@@ -595,14 +895,42 @@ function MessageComposer({
     [insertEmoji]
   );
 
+  /* ── File input (hidden) ── */
+
+  const canSend = !isSending && (draftText.trim().length > 0 || pendingFiles.length > 0) && draft.length <= 4000 && socketStatus === 'connected';
+
   return (
     <form
-      className="composer-shell"
+      className={`composer-shell ${isDragOver ? 'composer-shell-dragover' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       onSubmit={(event) => {
         onSubmit(event);
       }}
       ref={composerRef}
     >
+      <input
+        accept=".jpg,.jpeg,.png,.gif,.webp,.svg,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar,.7z,.tar,.gz,.json,.xml,.yaml"
+        className="sr-only"
+        multiple
+        onChange={handleFileInputChange}
+        ref={fileInputRef}
+        type="file"
+      />
+
+      {isDragOver && (
+        <div className="composer-drop-overlay">
+          <span>
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M10 3v10m-5-5l5-5 5 5" />
+              <path d="M3 16v1a1 1 0 001 1h12a1 1 0 001-1v-1" />
+            </svg>
+            Drop files here
+          </span>
+        </div>
+      )}
+
       <div className="dm-composer-input">
         <div
           aria-label={`Message ${participant.name}`}
@@ -621,6 +949,17 @@ function MessageComposer({
           suppressContentEditableWarning
         />
       </div>
+
+      {/* Pending file previews */}
+      {/* Pending file previews */}
+      {pendingFiles.length > 0 && (
+        <div className="fpc-strip">
+          {pendingFiles.map((file) => (
+            <FilePreviewCard file={file} key={file.id} onRemove={onRemoveFile} onRetry={onRetryFile} />
+          ))}
+        </div>
+      )}
+
       <div className="composer-footer">
         <div className="composer-toolbar" aria-label="Message formatting tools">
           {TEXT_FORMAT_OPTIONS.map((option) => (
@@ -690,6 +1029,17 @@ function MessageComposer({
           >
             {EMOJI_FORMAT_OPTION.label}
           </button>
+
+          <span aria-hidden="true" className="composer-toolbar-divider" />
+
+          <button
+            className="composer-tool composer-tool-attach"
+            onClick={handleFileButtonClick}
+            title="Attach file"
+            type="button"
+          >
+            +Attach
+          </button>
         </div>
 
         {isLinkPopoverOpen && (
@@ -736,16 +1086,79 @@ function MessageComposer({
 
         <span className="composer-meta">
           {socketStatusLabel(socketStatus)} &mdash; {draftText.length}/4000
+          {pendingFiles.length > 0 && (
+            <> &middot; <span className="composer-meta-files">{pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''}</span></>
+          )}
         </span>
         <button
           className="send-button"
-          disabled={isSending || !draftText.trim() || draft.length > 4000 || socketStatus !== 'connected'}
+          disabled={!canSend}
           type="submit"
         >
           {isSending ? 'Sending...' : 'Send'}
         </button>
       </div>
     </form>
+  );
+}
+
+/* ─── Attachment card (for rendering in message stream) ─── */
+
+function AttachmentCard({ attachment }: { attachment: AttachmentInfo }) {
+  const canPreview = canPreviewInBrowser(attachment.mimeType);
+  const isImage = attachment.mimeType.startsWith('image/');
+  const ext = getFileExtension(attachment.originalName);
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+  const fileUrl = `${apiUrl}${attachment.url}`;
+
+  return (
+    <div className="attachment-card">
+      {isImage ? (
+        <a className="attachment-card-image-link" href={fileUrl} target="_blank" rel="noopener noreferrer">
+          <img
+            alt={attachment.originalName}
+            className="attachment-card-image"
+            loading="lazy"
+            src={fileUrl}
+          />
+        </a>
+      ) : (
+        <a
+          className="attachment-card-file"
+          download={attachment.originalName}
+          href={canPreview ? fileUrl : undefined}
+          hrefLang={attachment.mimeType}
+          rel="noopener noreferrer"
+          target={canPreview ? '_blank' : undefined}
+          onClick={!canPreview ? (e) => {
+            e.preventDefault();
+            // Trigger download via a temporary anchor
+            const anchor = document.createElement('a');
+            anchor.href = fileUrl;
+            anchor.download = attachment.originalName;
+            document.body.appendChild(anchor);
+            anchor.click();
+            document.body.removeChild(anchor);
+          } : undefined}
+        >
+          <div className="attachment-card-icon">
+            <span>{ext || '?'}</span>
+          </div>
+          <div className="attachment-card-info">
+            <span className="attachment-card-name" title={attachment.originalName}>
+              {attachment.originalName}
+            </span>
+            <span className="attachment-card-meta">
+              {formatFileSize(attachment.size)}
+              {!canPreview && ' \u00b7 Download'}
+            </span>
+          </div>
+          <svg className="attachment-card-arrow" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M6 10h8m-4-4v8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </a>
+      )}
+    </div>
   );
 }
 

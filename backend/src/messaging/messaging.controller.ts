@@ -34,6 +34,6 @@ export class MessagingController {
 
   @Post('direct-conversations/:conversationId/messages')
   sendMessage(@CurrentUser() user: AuthenticatedUser, @Param('conversationId') conversationId: string, @Body() dto: SendMessageDto) {
-    return this.messagingService.sendMessage(user.sub, conversationId, dto.content);
+    return this.messagingService.sendMessage(user.sub, conversationId, dto.content, dto.attachmentIds);
   }
 }
