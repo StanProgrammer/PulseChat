@@ -288,17 +288,17 @@ function MessageStream({
             >
               <Avatar initials={getInitials(message.sender.name)} status={isOwn ? 'online' : undefined} />
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <h3 className="font-black">{isOwn ? 'You' : message.sender.name}</h3>
+                <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                  <h3 className="text-sm font-black leading-5">{isOwn ? 'You' : message.sender.name}</h3>
                   <span className="text-xs font-bold text-[#8a939d]">{formatMessageTime(message.createdAt)}</span>
-                  {message.status && (
+                  {message.status && message.status !== 'sent' && (
                     <span className={`message-status message-status-${message.status}`}>
                       {message.status}
                     </span>
                   )}
                 </div>
                 <div
-                  className="message-content mt-2 text-[0.95rem] leading-7 text-[#343940]"
+                  className="message-content mt-0.5 text-[0.92rem] leading-6 text-[#343940]"
                   dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }}
                 />
               </div>
