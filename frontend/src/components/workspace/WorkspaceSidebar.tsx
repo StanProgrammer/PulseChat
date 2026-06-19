@@ -8,13 +8,16 @@ import { formatMessagePreview, getInitials } from './messageUtils';
 type WorkspaceSidebarProps = {
   activeConversationId?: string;
   conversations: DirectConversation[];
+  isDesktop: boolean;
+  isOpen: boolean;
   isLoading: boolean;
   isSearching: boolean;
   isStartingConversation: string;
   onLogout: () => Promise<void>;
+  onClose: () => void;
   onQueryChange: (query: string) => void;
   onSelectConversation: (conversationId: string) => void;
-  onStartConversation: (teammate: Teammate) => void;
+  onStartConversation: (teammate: Teammate) => void | Promise<void>;
   query: string;
   searchResults: Teammate[];
   user: User;
@@ -23,10 +26,13 @@ type WorkspaceSidebarProps = {
 function WorkspaceSidebar({
   activeConversationId,
   conversations,
+  isDesktop,
+  isOpen,
   isLoading,
   isSearching,
   isStartingConversation,
   onLogout,
+  onClose,
   onQueryChange,
   onSelectConversation,
   onStartConversation,
@@ -37,22 +43,33 @@ function WorkspaceSidebar({
   const hasQuery = Boolean(query.trim());
 
   return (
-    <aside className="workspace-sidebar border-r border-white/10 bg-[#18242d] text-white lg:sticky lg:top-0 lg:h-screen">
-      <div className="flex h-full flex-col">
-        <div className="border-b border-white/10 p-4">
+    <aside
+      aria-label="Conversation list"
+      className={`workspace-sidebar ${isOpen ? 'workspace-sidebar-open' : ''} border-white/10 bg-[#18242d] text-white lg:sticky lg:top-0 lg:h-dvh lg:border-r`}
+      id="workspace-sidebar"
+    >
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="border-b border-white/10 p-3 sm:p-4">
           <div className="flex items-center justify-between gap-3">
             <BrandLockup inverted />
-            <button className="workspace-icon-button border-white/10 bg-white/8 text-white hover:bg-white/14" title="Start direct message" type="button">
-              +
-            </button>
+            {!isDesktop && (
+              <button
+                className="workspace-icon-button border-white/10 bg-white/8 text-white hover:bg-white/14"
+                onClick={onClose}
+                title="Close conversation list"
+                type="button"
+              >
+                x
+              </button>
+            )}
           </div>
-          <div className="mt-4 rounded-xl border border-white/10 bg-white/8 p-3 shadow-lg shadow-black/10">
+          <div className="mt-3 rounded-xl border border-white/10 bg-white/8 p-3 shadow-lg shadow-black/10 sm:mt-4">
             <p className="truncate text-sm font-black">{user.workspaceName}</p>
             <p className="mt-1 text-xs font-semibold text-white/52">Direct messages only</p>
           </div>
         </div>
 
-        <div className="scrollbar-soft flex-1 overflow-y-auto px-3 py-4">
+        <div className="scrollbar-soft min-h-0 flex-1 overflow-y-auto px-3 py-3 lg:py-4">
           <label className="dm-search-field">
             <span>Find teammate</span>
             <input

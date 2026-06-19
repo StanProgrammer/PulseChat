@@ -145,8 +145,8 @@ function App() {
   }
 
   return (
-    <main className="auth-shell min-h-screen overflow-hidden bg-[#f6f3ef] text-[#1d1c1d]">
-      <div className="auth-grid relative mx-auto grid min-h-screen w-full max-w-7xl items-center gap-8 px-4 py-6 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-8">
+    <main className="auth-shell min-h-dvh overflow-x-hidden bg-[#f6f3ef] text-[#1d1c1d]">
+      <div className="auth-grid relative mx-auto grid min-h-dvh w-full max-w-7xl items-center gap-8 px-4 py-6 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-8">
         <MarketingPanel />
         <AuthCard
           error={error}

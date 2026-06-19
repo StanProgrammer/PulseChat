@@ -60,6 +60,19 @@ const LINK_FORMAT_OPTION = { label: 'Link', title: 'Insert link' };
 const EMOJI_FORMAT_OPTION = { label: 'Emoji', title: 'Insert emoji' };
 const EMOJI_PICKER_ID = 'composer-emoji-picker';
 
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
+
+  useEffect(() => {
+    const mql = window.matchMedia(query);
+    const handler = (event: MediaQueryListEvent) => setMatches(event.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [query]);
+
+  return matches;
+}
+
 function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   const {
     activeConversation,
@@ -82,83 +95,230 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   } = useDirectMessaging(accessToken, user);
   const initials = getInitials(user.name);
   const activeParticipant = activeConversation?.participant ?? null;
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Auto-close sidebar when resizing from desktop to tablet/mobile
+  useEffect(() => {
+    if (isSidebarOpen && !isDesktop) {
+      setIsSidebarOpen(false);
+    }
+  }, [isDesktop]);
+
+  const handleSelectConversation = (conversationId: string) => {
+    setActiveConversationId(conversationId);
+    setIsSidebarOpen(false);
+  };
+
+  const handleStartConversation = async (teammate: Teammate) => {
+    await startConversation(teammate);
+    setIsSidebarOpen(false);
+  };
 
   return (
-    <main className="workspace-shell min-h-screen bg-[#eef1f4] text-[#17191c]">
-      <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
+    <main className="workspace-shell min-h-dvh overflow-x-hidden bg-[#eef1f4] text-[#17191c]">
+      {isSidebarOpen && !isDesktop && (
+        <button
+          aria-label="Close conversation list"
+          className="workspace-sidebar-backdrop"
+          onClick={() => setIsSidebarOpen(false)}
+          type="button"
+        />
+      )}
+
+      <div className="grid min-h-dvh grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
         <WorkspaceSidebar
           activeConversationId={activeConversation?.id}
           conversations={conversations}
+          isDesktop={isDesktop}
+          isOpen={isSidebarOpen}
           isLoading={isLoading}
           isSearching={isSearching}
           isStartingConversation={isStartingConversation}
           onLogout={onLogout}
+          onClose={() => setIsSidebarOpen(false)}
           onQueryChange={setQuery}
-          onSelectConversation={setActiveConversationId}
-          onStartConversation={startConversation}
+          onSelectConversation={handleSelectConversation}
+          onStartConversation={handleStartConversation}
           query={query}
           searchResults={searchResults}
           user={user}
         />
 
-        <section className="flex h-screen min-w-0 flex-col overflow-hidden">
-          <header className="workspace-header sticky top-0 z-20 border-b border-[#d9dee4] bg-white/86 backdrop-blur-xl">
-            <div className="flex min-h-[76px] flex-col gap-3 px-4 py-3 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.14em] text-[#707984]">
-                  <span className="h-2 w-2 rounded-full bg-[#2eb67d] shadow-[0_0_0_4px_rgba(46,182,125,0.13)]" />
-                  {user.workspaceName}
+        <section className="flex h-dvh min-w-0 flex-col overflow-hidden">
+          {/* ── Compact header ── */}
+          <header className="workspace-header z-20 border-b border-[#d9dee4] bg-white/86 backdrop-blur-xl">
+            <div className="flex min-h-[52px] items-center justify-between gap-3 px-4 py-2 sm:px-6">
+              <div className="flex min-w-0 items-center gap-2">
+                {!isDesktop && (
+                  <button
+                    aria-controls="workspace-sidebar"
+                    aria-expanded={isSidebarOpen}
+                    aria-label="Open conversation list"
+                    className="mobile-menu-button"
+                    onClick={() => setIsSidebarOpen(true)}
+                    type="button"
+                  >
+                    <span />
+                    <span />
+                    <span />
+                  </button>
+                )}
+                <div className="min-w-0">
+                  <h1 className="truncate text-base font-black text-[#17191c]">
+                    {activeParticipant ? activeParticipant.name : 'Direct messages'}
+                  </h1>
+                  {activeParticipant && (
+                    <p className="hidden truncate text-xs font-semibold text-[#707984] sm:block">
+                      {activeParticipant.email}
+                    </p>
+                  )}
                 </div>
-                <h1 className="mt-1 truncate text-2xl font-black text-[#17191c]">
-                  {activeParticipant ? activeParticipant.name : 'Start a direct message'}
-                </h1>
-                <p className="mt-1 max-w-3xl text-sm font-medium leading-6 text-[#606975]">
-                  {activeParticipant ? `Private conversation with ${activeParticipant.email}` : 'Search for someone in your workspace to open a 1:1 chat.'}
-                </p>
               </div>
-
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <div className="workspace-search">
-                  <span className="font-black text-[#4a154b]">S</span>
-                  <span className="truncate">Search same-workspace teammates</span>
-                  <kbd>DM</kbd>
-                </div>
-                <Avatar initials={initials} />
-              </div>
+              <Avatar initials={initials} size="sm" />
             </div>
           </header>
 
-          <div className="chat-main min-w-0 flex-1 px-4 py-5 sm:px-6">
-            <div className="conversation-panel animate-workspace-in">
-              {error && <p className="dm-error">{error}</p>}
+          {/* ── Message area ── */}
+          <div className="chat-main flex-1 min-h-0 overflow-hidden">
+            <div className="flex h-full min-h-0 flex-col px-3 pt-3 pb-0 sm:px-6 sm:pt-5">
+              {error && <p className="dm-error mb-3">{error}</p>}
 
               {activeParticipant ? (
-                <MemoizedDirectConversationPanel
-                  draft={draftHtml}
-                  draftText={draftText}
-                  isSending={isSending}
-                  messages={messages}
-                  onDraftChange={updateDraft}
-                  onSubmit={sendMessage}
-                  participant={activeParticipant}
-                  socketStatus={socketStatus}
-                  user={user}
-                />
+                <div className="conversation-panel flex min-h-0 flex-1 flex-col overflow-hidden">
+                  <MessageStream
+                    key={activeParticipant.id}
+                    messages={messages}
+                    participant={activeParticipant}
+                    user={user}
+                  />
+                </div>
               ) : (
-                <EmptyDirectState hasQuery={Boolean(query.trim())} />
+                <div className="conversation-panel h-full">
+                  <EmptyDirectState hasQuery={Boolean(query.trim())} isDesktop={isDesktop} onOpenSidebar={() => setIsSidebarOpen(true)} />
+                </div>
               )}
             </div>
           </div>
+
+          {/* ── Composer (outside the conversation panel) ── */}
+          {activeParticipant && (
+            <div className="flex-shrink-0 px-3 pb-3 pt-2 sm:px-6">
+              <MessageComposer
+                draft={draftHtml}
+                draftText={draftText}
+                isSending={isSending}
+                onDraftChange={updateDraft}
+                onSubmit={sendMessage}
+                participant={activeParticipant}
+                socketStatus={socketStatus}
+              />
+            </div>
+          )}
         </section>
       </div>
     </main>
   );
 }
 
-function DirectConversationPanel({
-  participant,
-  user,
+/* ─── Message stream (conversation messages only) ─── */
+
+function MessageStream({
   messages,
+  participant,
+  user
+}: {
+  messages: RealtimeMessage[];
+  participant: Teammate;
+  user: User;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const isInitialLoad = useRef(true);
+
+  const scrollToBottom = useCallback((smooth: boolean) => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    if (smooth) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, []);
+
+  // Mark as initial load when switching conversations (remount via key)
+  useEffect(() => {
+    isInitialLoad.current = true;
+  }, [participant.id]);
+
+  // Scroll when messages arrive — handles initial load, sent messages, and received messages
+  useEffect(() => {
+    if (!scrollRef.current || !messages.length) return;
+
+    // If this is the initial load for a new conversation, scroll instantly and exit
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
+      scrollToBottom(false);
+      return;
+    }
+
+    const el = scrollRef.current;
+    const lastMessage = messages[messages.length - 1];
+    const isOwnMessage = lastMessage.sender.id === user.id;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+
+    // Always scroll for own (sent) messages; for received, only if user is near bottom
+    if (isOwnMessage || isNearBottom) {
+      scrollToBottom(true);
+    }
+  }, [messages, scrollToBottom, user.id]);
+
+  return (
+    <div className="conversation-stream" ref={scrollRef}>
+      <DateDivider label="Today" />
+      {messages.length ? (
+        messages.map((message, index) => {
+          const isOwn = message.sender.id === user.id;
+
+          return (
+            <article
+              className={`message-card ${isOwn ? 'message-card-own' : ''}`}
+              key={message.id}
+              style={{ animationDelay: `${index * 55}ms` }}
+            >
+              <Avatar initials={getInitials(message.sender.name)} status={isOwn ? 'online' : undefined} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <h3 className="font-black">{isOwn ? 'You' : message.sender.name}</h3>
+                  <span className="text-xs font-bold text-[#8a939d]">{formatMessageTime(message.createdAt)}</span>
+                  {message.status && (
+                    <span className={`message-status message-status-${message.status}`}>
+                      {message.status}
+                    </span>
+                  )}
+                </div>
+                <div
+                  className="message-content mt-2 text-[0.95rem] leading-7 text-[#343940]"
+                  dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }}
+                />
+              </div>
+            </article>
+          );
+        })
+      ) : (
+        <div className="dm-thread-empty">
+          <p>No messages yet.</p>
+          <span>Send the first note to start the conversation.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Message composer (editor, toolbar, popovers) ─── */
+
+function MessageComposer({
+  participant,
   draft,
   draftText,
   isSending,
@@ -167,8 +327,6 @@ function DirectConversationPanel({
   onSubmit
 }: {
   participant: Teammate;
-  user: User;
-  messages: RealtimeMessage[];
   draft: string;
   draftText: string;
   isSending: boolean;
@@ -180,8 +338,6 @@ function DirectConversationPanel({
   const composerRef = useRef<HTMLFormElement | null>(null);
   const savedSelectionRef = useRef<Range | null>(null);
   const linkTextInputRef = useRef<HTMLInputElement | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const pendingAutoScrollRef = useRef(false);
   const [activeMarks, setActiveMarks] = useState<Record<TextFormatCommand, boolean>>({
     bold: false,
     italic: false,
@@ -196,121 +352,18 @@ function DirectConversationPanel({
   const [linkDraft, setLinkDraft] = useState({ text: '', url: '', error: '' });
   const [recentEmojis, setRecentEmojis] = useState<RecentEmoji[]>(() => loadRecentEmojis());
 
-  const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, []);
-
-  // Flag pending scroll when switching conversations
-  useEffect(() => {
-    pendingAutoScrollRef.current = true;
-  }, [participant.id]);
-
-  useEffect(() => {
-    if (!scrollRef.current || !messages.length) return;
-
-    if (pendingAutoScrollRef.current) {
-      scrollToBottom();
-      pendingAutoScrollRef.current = false;
-      return;
-    }
-
-    const el = scrollRef.current;
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
-
-    if (isNearBottom) {
-      scrollToBottom();
-    }
-  }, [messages, scrollToBottom]);
-
-  useEffect(() => {
-    const editor = editorRef.current;
-
-    if (!editor || draft || editor.innerHTML === '') {
-      return;
-    }
-
-    editor.innerHTML = '';
-  }, [draft]);
-
-  useEffect(() => {
-    const updateActiveMarks = () => {
-      const editor = editorRef.current;
-      const selection = window.getSelection();
-
-      if (!editor || !selection?.rangeCount || !editor.contains(selection.anchorNode)) {
-        return;
-      }
-
-      setActiveMarks(getActiveEditorCommands());
-    };
-
-    document.addEventListener('selectionchange', updateActiveMarks);
-    return () => document.removeEventListener('selectionchange', updateActiveMarks);
-  }, []);
-
-  useEffect(() => {
-    if (!isLinkPopoverOpen && !isEmojiPopoverOpen) {
-      return;
-    }
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-
-      if (!(target instanceof Node) || composerRef.current?.contains(target)) {
-        return;
-      }
-
-      setIsLinkPopoverOpen(false);
-      setIsEmojiPopoverOpen(false);
-      setLinkDraft({ text: '', url: '', error: '' });
-    };
-
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape') {
-        return;
-      }
-
-      setIsLinkPopoverOpen(false);
-      setIsEmojiPopoverOpen(false);
-      setLinkDraft({ text: '', url: '', error: '' });
-      editorRef.current?.focus();
-    };
-
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isEmojiPopoverOpen, isLinkPopoverOpen]);
-
   const syncEditorDraft = () => {
     const editor = editorRef.current;
-
-    if (!editor) {
-      return;
-    }
-
+    if (!editor) return;
     onDraftChange(sanitizeMessageHtml(editor.innerHTML), editor.textContent || '');
   };
 
   const saveEditorSelection = () => {
     const editor = editorRef.current;
     const selection = window.getSelection();
-
-    if (!editor || !selection?.rangeCount) {
-      return;
-    }
-
+    if (!editor || !selection?.rangeCount) return;
     const range = selection.getRangeAt(0);
-
-    if (!editor.contains(range.commonAncestorContainer)) {
-      return;
-    }
-
+    if (!editor.contains(range.commonAncestorContainer)) return;
     savedSelectionRef.current = range.cloneRange();
   };
 
@@ -346,18 +399,63 @@ function DirectConversationPanel({
     const html = event.clipboardData.getData('text/html');
     const text = event.clipboardData.getData('text/plain');
     const content = html ? sanitizeMessageHtml(html) : escapeHtml(text).replace(/\r?\n/g, '<br>');
-
     document.execCommand('insertHTML', false, content);
     syncEditorDraft();
   };
 
+  // Restore empty editor when switching conversations
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || draft || editor.innerHTML === '') return;
+    editor.innerHTML = '';
+  }, [draft]);
+
+  // Track active formatting marks
+  useEffect(() => {
+    const updateActiveMarks = () => {
+      const editor = editorRef.current;
+      const selection = window.getSelection();
+      if (!editor || !selection?.rangeCount || !editor.contains(selection.anchorNode)) return;
+      setActiveMarks(getActiveEditorCommands());
+    };
+    document.addEventListener('selectionchange', updateActiveMarks);
+    return () => document.removeEventListener('selectionchange', updateActiveMarks);
+  }, []);
+
+  // Close popovers on outside click / Escape
+  useEffect(() => {
+    if (!isLinkPopoverOpen && !isEmojiPopoverOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node) || composerRef.current?.contains(target)) return;
+      setIsLinkPopoverOpen(false);
+      setIsEmojiPopoverOpen(false);
+      setLinkDraft({ text: '', url: '', error: '' });
+    };
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setIsLinkPopoverOpen(false);
+      setIsEmojiPopoverOpen(false);
+      setLinkDraft({ text: '', url: '', error: '' });
+      editorRef.current?.focus();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isEmojiPopoverOpen, isLinkPopoverOpen]);
+
+  /* ── Link popover ── */
+
   const openLinkPopover = () => {
     const editor = editorRef.current;
     const selection = window.getSelection();
-
-    if (!editor) {
-      return;
-    }
+    if (!editor) return;
 
     editor.focus();
     setIsEmojiPopoverOpen(false);
@@ -385,7 +483,6 @@ function DirectConversationPanel({
     }
 
     const activeLink = findClosestLink(selection.anchorNode, editor);
-
     if (activeLink && !selectedText) {
       savedRange = document.createRange();
       savedRange.selectNode(activeLink);
@@ -408,12 +505,42 @@ function DirectConversationPanel({
     editorRef.current?.focus();
   };
 
-  const openEmojiPopover = () => {
-    const editor = editorRef.current;
-
-    if (!editor) {
+  const insertLink = () => {
+    const href = normalizeLinkUrl(linkDraft.url);
+    if (!href) {
+      setLinkDraft((current) => ({ ...current, error: 'Enter a valid http, https, mailto, or tel link.' }));
       return;
     }
+
+    const text = linkDraft.text.trim() || href;
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection) return;
+
+    editor.focus();
+    selection.removeAllRanges();
+    if (savedSelectionRef.current) selection.addRange(savedSelectionRef.current);
+    document.execCommand('insertHTML', false, createLinkHtml(text, href));
+    syncEditorDraft();
+    closeLinkPopover();
+  };
+
+  const handleLinkPopoverKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeLinkPopover();
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      insertLink();
+    }
+  };
+
+  /* ── Emoji popover ── */
+
+  const openEmojiPopover = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
 
     setIsLinkPopoverOpen(false);
     setLinkDraft({ text: '', url: '', error: '' });
@@ -432,11 +559,7 @@ function DirectConversationPanel({
 
   const insertEmoji = useCallback((emoji: string) => {
     const editor = editorRef.current;
-
-    if (!editor) {
-      return;
-    }
-
+    if (!editor) return;
     editor.focus();
     insertTextAtSavedSelection(editor, savedSelectionRef, emoji);
     syncEditorDraft();
@@ -448,253 +571,202 @@ function DirectConversationPanel({
     editorRef.current?.focus();
   }, []);
 
-  const handleEmojiSelect = useCallback((emojiData: SelectedEmoji) => {
-    insertEmoji(emojiData.native);
-    setRecentEmojis((current) => {
-      const next = updateRecentEmojis(current, emojiData);
-      persistRecentEmojis(next);
-      return next;
-    });
-  }, [insertEmoji]);
+  const handleEmojiSelect = useCallback(
+    (emojiData: SelectedEmoji) => {
+      insertEmoji(emojiData.native);
+      setRecentEmojis((current) => {
+        const next = updateRecentEmojis(current, emojiData);
+        persistRecentEmojis(next);
+        return next;
+      });
+    },
+    [insertEmoji]
+  );
 
-  const handleRecentEmojiInsert = useCallback((emoji: RecentEmoji) => {
-    insertEmoji(emoji.emoji);
-    setRecentEmojis((current) => {
-      const next = [emoji, ...current.filter((item) => item.unified !== emoji.unified)].slice(0, MAX_RECENT_EMOJIS);
-      persistRecentEmojis(next);
-      return next;
-    });
-  }, [insertEmoji]);
-
-  const insertLink = () => {
-    const href = normalizeLinkUrl(linkDraft.url);
-
-    if (!href) {
-      setLinkDraft((current) => ({ ...current, error: 'Enter a valid http, https, mailto, or tel link.' }));
-      return;
-    }
-
-    const text = linkDraft.text.trim() || href;
-    const editor = editorRef.current;
-    const selection = window.getSelection();
-
-    if (!editor || !selection) {
-      return;
-    }
-
-    editor.focus();
-    selection.removeAllRanges();
-
-    if (savedSelectionRef.current) {
-      selection.addRange(savedSelectionRef.current);
-    }
-
-    document.execCommand('insertHTML', false, createLinkHtml(text, href));
-    syncEditorDraft();
-    closeLinkPopover();
-  };
-
-  const handleLinkPopoverKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeLinkPopover();
-    }
-
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      insertLink();
-    }
-  };
+  const handleRecentEmojiInsert = useCallback(
+    (emoji: RecentEmoji) => {
+      insertEmoji(emoji.emoji);
+      setRecentEmojis((current) => {
+        const next = [emoji, ...current.filter((item) => item.unified !== emoji.unified)].slice(0, MAX_RECENT_EMOJIS);
+        persistRecentEmojis(next);
+        return next;
+      });
+    },
+    [insertEmoji]
+  );
 
   return (
-    <>
-      <div className="conversation-hero">
-        <div className="flex min-w-0 items-center gap-3">
-          <Avatar initials={getInitials(participant.name)} status="online" />
-          <div className="min-w-0">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-[#707984]">Direct message</p>
-            <h2 className="mt-1 truncate text-xl font-black">{participant.name}</h2>
-            <p className="mt-1 truncate text-sm font-semibold text-[#606975]">{participant.email}</p>
-          </div>
-        </div>
-        <span className="channel-meta-pill">Same workspace</span>
-      </div>
-
-      <div className="conversation-stream" ref={scrollRef}>
-        <DateDivider label="Today" />
-        {messages.length ? (
-          messages.map((message, index) => {
-            const isOwn = message.sender.id === user.id;
-
-            return (
-              <article className={`message-card ${isOwn ? 'message-card-own' : ''}`} key={message.id} style={{ animationDelay: `${index * 55}ms` }}>
-                <Avatar initials={getInitials(message.sender.name)} status={isOwn ? 'online' : undefined} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <h3 className="font-black">{isOwn ? 'You' : message.sender.name}</h3>
-                    <span className="text-xs font-bold text-[#8a939d]">{formatMessageTime(message.createdAt)}</span>
-                    {message.status && <span className={`message-status message-status-${message.status}`}>{message.status}</span>}
-                  </div>
-                  <div className="message-content mt-2 text-[0.95rem] leading-7 text-[#343940]" dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }} />
-                </div>
-              </article>
-            );
-          })
-        ) : (
-          <div className="dm-thread-empty">
-            <p>No messages yet.</p>
-            <span>Send the first note to start the conversation.</span>
-          </div>
-        )}
-      </div>
-
-      <form className="composer-shell" onSubmit={(event) => {
-        pendingAutoScrollRef.current = true;
+    <form
+      className="composer-shell"
+      onSubmit={(event) => {
         onSubmit(event);
-      }} ref={composerRef}>
-        <div className="dm-composer-input">
-          <div
-            aria-label={`Message ${participant.name}`}
-            className="dm-composer-editor"
-            contentEditable
-            data-placeholder={`Message ${participant.name}`}
-            onBlur={saveEditorSelection}
-            onFocus={saveEditorSelection}
-            onInput={syncEditorDraft}
-            onKeyUp={saveEditorSelection}
-            onMouseUp={saveEditorSelection}
-            onKeyDown={handleEditorKeyDown}
-            onPaste={handlePaste}
-            ref={editorRef}
-            role="textbox"
-            suppressContentEditableWarning
-          />
-        </div>
-        <div className="composer-footer">
-          <div className="composer-toolbar" aria-label="Message formatting tools">
-            {TEXT_FORMAT_OPTIONS.map((option) => (
-              <button
-                aria-pressed={activeMarks[option.command]}
-                className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
-                key={option.title}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  toggleEditorCommand(editorRef.current, option.command, syncEditorDraft);
-                  setActiveMarks(getActiveEditorCommands());
-                }}
-                title={option.title}
-                type="button"
-              >
-                <span className={`composer-tool-${option.styleClass}`}>{option.label}</span>
-              </button>
-            ))}
-
-            <span aria-hidden="true" className="composer-toolbar-divider" />
-
+      }}
+      ref={composerRef}
+    >
+      <div className="dm-composer-input">
+        <div
+          aria-label={`Message ${participant.name}`}
+          className="dm-composer-editor"
+          contentEditable
+          data-placeholder={`Message ${participant.name}`}
+          onBlur={saveEditorSelection}
+          onFocus={saveEditorSelection}
+          onInput={syncEditorDraft}
+          onKeyUp={saveEditorSelection}
+          onMouseUp={saveEditorSelection}
+          onKeyDown={handleEditorKeyDown}
+          onPaste={handlePaste}
+          ref={editorRef}
+          role="textbox"
+          suppressContentEditableWarning
+        />
+      </div>
+      <div className="composer-footer">
+        <div className="composer-toolbar" aria-label="Message formatting tools">
+          {TEXT_FORMAT_OPTIONS.map((option) => (
             <button
-              aria-pressed={activeMarks.code}
-              className={`composer-tool composer-tool-code ${activeMarks.code ? 'composer-tool-active' : ''}`}
+              aria-pressed={activeMarks[option.command]}
+              className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
+              key={option.title}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
-                toggleInlineCode(editorRef.current, syncEditorDraft);
+                toggleEditorCommand(editorRef.current, option.command, syncEditorDraft);
                 setActiveMarks(getActiveEditorCommands());
               }}
-              title={CODE_FORMAT_OPTION.title}
+              title={option.title}
               type="button"
             >
-              {CODE_FORMAT_OPTION.label}
+              <span className={`composer-tool-${option.styleClass}`}>{option.label}</span>
             </button>
-            <button
-              className="composer-tool composer-tool-code-block"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                insertCodeBlock(editorRef.current, syncEditorDraft);
-              }}
-              title={CODE_BLOCK_OPTION.title}
-              type="button"
-            >
-              {CODE_BLOCK_OPTION.label}
-            </button>
+          ))}
 
-            <span aria-hidden="true" className="composer-toolbar-divider" />
+          <span aria-hidden="true" className="composer-toolbar-divider" />
 
-            <button
-              aria-expanded={isLinkPopoverOpen}
-              className={`composer-tool composer-tool-link ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={openLinkPopover}
-              title={LINK_FORMAT_OPTION.title}
-              type="button"
-            >
-              {LINK_FORMAT_OPTION.label}
-            </button>
-            <button
-              aria-controls={EMOJI_PICKER_ID}
-              aria-expanded={isEmojiPopoverOpen}
-              className={`composer-tool composer-tool-emoji ${isEmojiPopoverOpen ? 'composer-tool-active' : ''}`}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={openEmojiPopover}
-              title={EMOJI_FORMAT_OPTION.title}
-              type="button"
-            >
-              {EMOJI_FORMAT_OPTION.label}
-            </button>
-          </div>
-          {isLinkPopoverOpen && (
-            <div aria-label="Insert link" className="link-popover" onKeyDown={handleLinkPopoverKeyDown} role="dialog">
-              <label>
-                <span>Text</span>
-                <input
-                  ref={linkTextInputRef}
-                  onChange={(event) => setLinkDraft((current) => ({ ...current, text: event.target.value, error: '' }))}
-                  placeholder="Display text"
-                  value={linkDraft.text}
-                />
-              </label>
-              <label>
-                <span>Link</span>
-                <input
-                  inputMode="url"
-                  onChange={(event) => setLinkDraft((current) => ({ ...current, url: event.target.value, error: '' }))}
-                  placeholder="https://example.com"
-                  value={linkDraft.url}
-                />
-              </label>
-              {linkDraft.error && <p className="link-popover-error">{linkDraft.error}</p>}
-              <div className="link-popover-actions">
-                <button className="link-popover-secondary" onClick={closeLinkPopover} type="button">Cancel</button>
-                <button className="link-popover-primary" onClick={insertLink} type="button">Insert</button>
-              </div>
-            </div>
-          )}
-          {isEmojiPopoverOpen && (
-            <EmojiPickerPopover
-              id={EMOJI_PICKER_ID}
-              onClose={handleCloseEmojiPopover}
-              onEmojiSelect={handleEmojiSelect}
-              onRecentEmojiSelect={handleRecentEmojiInsert}
-              recentEmojis={recentEmojis}
-            />
-          )}
-          <span className="composer-meta">{socketStatusLabel(socketStatus)} - {draftText.length}/4000</span>
-          <button className="send-button" disabled={isSending || !draftText.trim() || draft.length > 4000 || socketStatus !== 'connected'} type="submit">{isSending ? 'Sending...' : 'Send'}</button>
+          <button
+            aria-pressed={activeMarks.code}
+            className={`composer-tool composer-tool-code ${activeMarks.code ? 'composer-tool-active' : ''}`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              toggleInlineCode(editorRef.current, syncEditorDraft);
+              setActiveMarks(getActiveEditorCommands());
+            }}
+            title={CODE_FORMAT_OPTION.title}
+            type="button"
+          >
+            {CODE_FORMAT_OPTION.label}
+          </button>
+          <button
+            className="composer-tool composer-tool-code-block"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              insertCodeBlock(editorRef.current, syncEditorDraft);
+            }}
+            title={CODE_BLOCK_OPTION.title}
+            type="button"
+          >
+            {CODE_BLOCK_OPTION.label}
+          </button>
+
+          <span aria-hidden="true" className="composer-toolbar-divider" />
+
+          <button
+            aria-expanded={isLinkPopoverOpen}
+            className={`composer-tool composer-tool-link ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={openLinkPopover}
+            title={LINK_FORMAT_OPTION.title}
+            type="button"
+          >
+            {LINK_FORMAT_OPTION.label}
+          </button>
+          <button
+            aria-controls={EMOJI_PICKER_ID}
+            aria-expanded={isEmojiPopoverOpen}
+            className={`composer-tool composer-tool-emoji ${isEmojiPopoverOpen ? 'composer-tool-active' : ''}`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={openEmojiPopover}
+            title={EMOJI_FORMAT_OPTION.title}
+            type="button"
+          >
+            {EMOJI_FORMAT_OPTION.label}
+          </button>
         </div>
-      </form>
-    </>
+
+        {isLinkPopoverOpen && (
+          <div aria-label="Insert link" className="link-popover" onKeyDown={handleLinkPopoverKeyDown} role="dialog">
+            <label>
+              <span>Text</span>
+              <input
+                ref={linkTextInputRef}
+                onChange={(event) => setLinkDraft((current) => ({ ...current, text: event.target.value, error: '' }))}
+                placeholder="Display text"
+                value={linkDraft.text}
+              />
+            </label>
+            <label>
+              <span>Link</span>
+              <input
+                inputMode="url"
+                onChange={(event) => setLinkDraft((current) => ({ ...current, url: event.target.value, error: '' }))}
+                placeholder="https://example.com"
+                value={linkDraft.url}
+              />
+            </label>
+            {linkDraft.error && <p className="link-popover-error">{linkDraft.error}</p>}
+            <div className="link-popover-actions">
+              <button className="link-popover-secondary" onClick={closeLinkPopover} type="button">
+                Cancel
+              </button>
+              <button className="link-popover-primary" onClick={insertLink} type="button">
+                Insert
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isEmojiPopoverOpen && (
+          <EmojiPickerPopover
+            id={EMOJI_PICKER_ID}
+            onClose={handleCloseEmojiPopover}
+            onEmojiSelect={handleEmojiSelect}
+            onRecentEmojiSelect={handleRecentEmojiInsert}
+            recentEmojis={recentEmojis}
+          />
+        )}
+
+        <span className="composer-meta">
+          {socketStatusLabel(socketStatus)} &mdash; {draftText.length}/4000
+        </span>
+        <button
+          className="send-button"
+          disabled={isSending || !draftText.trim() || draft.length > 4000 || socketStatus !== 'connected'}
+          type="submit"
+        >
+          {isSending ? 'Sending...' : 'Send'}
+        </button>
+      </div>
+    </form>
   );
 }
 
-const MemoizedDirectConversationPanel = memo(DirectConversationPanel);
+/* ─── Empty state ─── */
 
-function EmptyDirectState({ hasQuery }: { hasQuery: boolean }) {
+function EmptyDirectState({ hasQuery, isDesktop, onOpenSidebar }: { hasQuery: boolean; isDesktop: boolean; onOpenSidebar: () => void }) {
   return (
     <div className="empty-dm-state">
       <div className="empty-dm-mark">@</div>
       <h2>{hasQuery ? 'Pick a teammate from search' : 'Find someone to DM'}</h2>
       <p>Search uses your workspace name, so only people from the same company/workspace can appear and start a direct chat.</p>
+      {!isDesktop && (
+        <button className="empty-dm-action" onClick={onOpenSidebar} type="button">
+          Open conversations
+        </button>
+      )}
     </div>
   );
 }
+
+/* ─── Date divider ─── */
 
 function DateDivider({ label }: { label: string }) {
   return (
