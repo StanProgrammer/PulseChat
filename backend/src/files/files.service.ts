@@ -1,17 +1,16 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
-import { extname, join, relative } from 'node:path';
+import { BadRequestException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { v2 as cloudinary, UploadApiResponse } from 'cloudinary';
+import { extname } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
 
-const ALLOWED_MIME_TYPES = [
-  // Images
+const IMAGE_MIME_TYPES = [
   'image/jpeg',
   'image/png',
   'image/gif',
-  'image/webp',
-  'image/svg+xml',
-  // Documents
+  'image/webp'
+];
+
+const DOCUMENT_MIME_TYPES = [
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -20,38 +19,30 @@ const ALLOWED_MIME_TYPES = [
   'application/vnd.ms-powerpoint',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'text/plain',
-  'text/csv',
-  // Archives
-  'application/zip',
-  'application/x-rar-compressed',
-  'application/x-7z-compressed',
-  'application/x-tar',
-  'application/gzip',
-  // Code / data
-  'application/json',
-  'application/xml',
-  'text/xml',
-  'text/yaml',
-  'application/x-yaml'
+  'text/csv'
 ];
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
-const UPLOADS_DIR = join(__dirname, '..', '..', 'uploads');
+export const ALLOWED_MIME_TYPES = [...IMAGE_MIME_TYPES, ...DOCUMENT_MIME_TYPES];
+export const MAX_FILE_SIZE = 20 * 1024 * 1024;
+
+type CloudinaryResourceType = 'image' | 'raw';
 
 @Injectable()
 export class FilesService {
   constructor(private readonly prisma: PrismaService) {
-    if (!existsSync(UPLOADS_DIR)) {
-      mkdirSync(UPLOADS_DIR, { recursive: true });
-    }
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+      secure: true
+    });
   }
 
   validateFile(mimeType: string, size: number, originalName: string) {
     if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
       const ext = extname(originalName).toLowerCase().slice(1);
-      const allowedTypes = ALLOWED_MIME_TYPES.map((t) => t.split('/')[1]).join(', ');
       throw new BadRequestException(
-        `File type "${mimeType || ext}" is not allowed. Allowed types: ${allowedTypes}`
+        `File type "${mimeType || ext}" is not allowed. Upload an image, PDF, Office document, text file, or CSV.`
       );
     }
 
@@ -63,42 +54,34 @@ export class FilesService {
     }
   }
 
-  generateFileName(originalName: string, mimeType: string) {
-    const ext = extname(originalName) || '.' + mimeType.split('/')[1] || '';
-    return `${randomUUID()}${ext}`;
-  }
-
-  storeFile(buffer: Buffer, fileName: string): string {
-    const filePath = join(UPLOADS_DIR, fileName);
-    writeFileSync(filePath, buffer);
-    return `/uploads/${fileName}`;
-  }
-
   async uploadFile(
     buffer: Buffer,
     originalName: string,
     mimeType: string,
     size: number,
-    messageId: string
+    uploaderId: string
   ) {
-    // Defense-in-depth: validate again even though ParseFilePipe already checks
     this.validateFile(mimeType, size, originalName);
 
-    const fileName = this.generateFileName(originalName, mimeType);
-    const url = this.storeFile(buffer, fileName);
+    const uploadResult = await this.uploadToCloudinary(buffer, {
+      originalName,
+      mimeType,
+      uploaderId
+    });
 
-    const attachment = await this.prisma.attachment.create({
+    return this.prisma.attachment.create({
       data: {
-        messageId,
-        fileName,
+        uploaderId,
+        fileName: uploadResult.original_filename || originalName,
         originalName,
         mimeType,
         size,
-        url
+        url: uploadResult.secure_url,
+        publicId: uploadResult.public_id,
+        resourceType: uploadResult.resource_type,
+        fileType: this.getFileType(mimeType)
       }
     });
-
-    return attachment;
   }
 
   async getAttachment(id: string) {
@@ -107,7 +90,47 @@ export class FilesService {
     });
 
     if (!attachment) {
-      throw new BadRequestException('Attachment could not be found.');
+      throw new NotFoundException('Attachment could not be found.');
+    }
+
+    return attachment;
+  }
+
+  async getAttachmentForUser(userId: string, id: string) {
+    const attachment = await this.prisma.attachment.findUnique({
+      where: { id },
+      include: {
+        message: {
+          select: {
+            conversationId: true
+          }
+        }
+      }
+    });
+
+    if (!attachment) {
+      throw new NotFoundException('Attachment could not be found.');
+    }
+
+    if (!attachment.messageId) {
+      if (attachment.uploaderId !== userId) {
+        throw new ForbiddenException('You do not have access to this attachment.');
+      }
+
+      return attachment;
+    }
+
+    const membership = await this.prisma.conversationMember.findUnique({
+      where: {
+        conversationId_userId: {
+          conversationId: attachment.message!.conversationId,
+          userId
+        }
+      }
+    });
+
+    if (!membership) {
+      throw new ForbiddenException('You do not have access to this attachment.');
     }
 
     return attachment;
@@ -122,20 +145,65 @@ export class FilesService {
 
   async deleteAttachment(id: string) {
     const attachment = await this.getAttachment(id);
-    const filePath = join(UPLOADS_DIR, attachment.fileName);
 
     try {
-      if (existsSync(filePath)) {
-        unlinkSync(filePath);
-      }
+      await cloudinary.uploader.destroy(attachment.publicId, {
+        resource_type: attachment.resourceType as CloudinaryResourceType
+      });
     } catch {
-      // File may already be deleted — proceed with DB cleanup
+      // Cloudinary may have already removed the asset. Keep DB cleanup idempotent.
     }
 
     await this.prisma.attachment.delete({ where: { id } });
   }
 
-  getUploadsDir() {
-    return UPLOADS_DIR;
+  private uploadToCloudinary(
+    buffer: Buffer,
+    options: { originalName: string; mimeType: string; uploaderId: string }
+  ) {
+    this.ensureCloudinaryConfigured();
+
+    const resourceType = this.getResourceType(options.mimeType);
+    const folder = process.env.CLOUDINARY_UPLOAD_FOLDER || 'chat-app/attachments';
+
+    return new Promise<UploadApiResponse>((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder,
+          resource_type: resourceType,
+          use_filename: false,
+          unique_filename: true,
+          overwrite: false,
+          context: {
+            originalName: options.originalName,
+            uploaderId: options.uploaderId
+          }
+        },
+        (error, result) => {
+          if (error || !result) {
+            reject(new InternalServerErrorException('Upload failed. Please try again.'));
+            return;
+          }
+
+          resolve(result);
+        }
+      );
+
+      uploadStream.end(buffer);
+    });
+  }
+
+  private ensureCloudinaryConfigured() {
+    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+      throw new InternalServerErrorException('File uploads are not configured.');
+    }
+  }
+
+  private getResourceType(mimeType: string): CloudinaryResourceType {
+    return mimeType.startsWith('image/') ? 'image' : 'raw';
+  }
+
+  private getFileType(mimeType: string) {
+    return mimeType.startsWith('image/') ? 'image' : 'document';
   }
 }

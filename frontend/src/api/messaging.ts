@@ -29,6 +29,10 @@ export type AttachmentInfo = {
   mimeType: string;
   size: number;
   url: string;
+  publicId: string;
+  resourceType: string;
+  fileType: 'image' | 'document';
+  uploaderId: string;
   createdAt: string;
 };
 
@@ -116,6 +120,10 @@ export function uploadFile(accessToken: string, file: File, onProgress?: (percen
 
 export function getFileDownloadUrl(attachment: AttachmentInfo) {
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+  if (/^https?:\/\//i.test(attachment.url)) {
+    return attachment.url;
+  }
+
   return `${apiUrl}${attachment.url}`;
 }
 

@@ -10,6 +10,7 @@ import {
   canPreviewInBrowser,
   formatFileSize,
   getFileExtension,
+  getFileDownloadUrl,
   uploadFile
 } from '../api/messaging';
 import type {
@@ -70,6 +71,23 @@ const CODE_BLOCK_OPTION = { label: 'pre', title: 'Code block' } as const;
 const LINK_FORMAT_OPTION = { label: 'Link', title: 'Insert link' };
 const EMOJI_FORMAT_OPTION = { label: 'Emoji', title: 'Insert emoji' };
 const EMOJI_PICKER_ID = 'composer-emoji-picker';
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const ALLOWED_UPLOAD_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'text/csv'
+]);
+const ACCEPTED_UPLOAD_EXTENSIONS = '.jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv';
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
@@ -132,15 +150,20 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   const handleFileSelect = useCallback((files: FileList | null) => {
     if (!files?.length) return;
 
-    const maxSize = 20 * 1024 * 1024;
     const newFiles: PendingFile[] = [];
-    let skipped = 0;
+    let skippedForSize = 0;
+    let skippedForType = 0;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
 
-      if (file.size > maxSize) {
-        skipped++;
+      if (file.size > MAX_FILE_SIZE) {
+        skippedForSize++;
+        continue;
+      }
+
+      if (!ALLOWED_UPLOAD_MIME_TYPES.has(file.type)) {
+        skippedForType++;
         continue;
       }
 
@@ -157,8 +180,18 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
       newFiles.push(pendingFile);
     }
 
-    if (skipped > 0) {
-      setFileError(`${skipped} file${skipped > 1 ? 's were' : ' was'} skipped (max 20 MB per file).`);
+    if (skippedForSize > 0 || skippedForType > 0) {
+      const messages = [];
+
+      if (skippedForSize > 0) {
+        messages.push(`${skippedForSize} file${skippedForSize > 1 ? 's were' : ' was'} over 20 MB`);
+      }
+
+      if (skippedForType > 0) {
+        messages.push(`${skippedForType} file${skippedForType > 1 ? 's were' : ' was'} not an allowed image or document`);
+      }
+
+      setFileError(`${messages.join('; ')}.`);
       window.setTimeout(() => setFileError(''), 5000);
     }
 
@@ -197,7 +230,9 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     }
 
     // Upload any pending files
-    const attachmentIds: string[] = [];
+    const attachmentIds = pendingFiles
+      .filter((f) => f.status === 'done' && f.attachmentInfo)
+      .map((f) => f.attachmentInfo!.id);
     const uploading = pendingFiles.filter((f) => f.status === 'pending' || f.status === 'error');
 
     for (const pendingFile of uploading) {
@@ -911,7 +946,7 @@ function MessageComposer({
       ref={composerRef}
     >
       <input
-        accept=".jpg,.jpeg,.png,.gif,.webp,.svg,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar,.7z,.tar,.gz,.json,.xml,.yaml"
+        accept={ACCEPTED_UPLOAD_EXTENSIONS}
         className="sr-only"
         multiple
         onChange={handleFileInputChange}
@@ -1108,8 +1143,7 @@ function AttachmentCard({ attachment }: { attachment: AttachmentInfo }) {
   const canPreview = canPreviewInBrowser(attachment.mimeType);
   const isImage = attachment.mimeType.startsWith('image/');
   const ext = getFileExtension(attachment.originalName);
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
-  const fileUrl = `${apiUrl}${attachment.url}`;
+  const fileUrl = getFileDownloadUrl(attachment);
 
   return (
     <div className="attachment-card">

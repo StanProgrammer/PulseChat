@@ -18,6 +18,7 @@ model User {
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   messages            Message[]
+  uploadedAttachments Attachment[]          @relation("AttachmentUploader")
   conversationMembers ConversationMember[]
 
   @@index([workspaceName])
@@ -56,16 +57,23 @@ model Message {
 
 model Attachment {
   id           String   @id @default(cuid())
-  messageId    String
-  message      Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId    String?
+  message      Message? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  uploaderId   String
+  uploader     User     @relation("AttachmentUploader", fields: [uploaderId], references: [id], onDelete: Cascade)
   fileName     String
   originalName String
   mimeType     String
   size         Int
   url          String
+  publicId     String   @unique
+  resourceType String
+  fileType     String
   createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([messageId])
+  @@index([uploaderId, createdAt])
 }
 
 model Conversation {

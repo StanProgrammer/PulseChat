@@ -1,9 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import * as cookieParser from 'cookie-parser';
-import * as express from 'express';
-import { join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -14,15 +11,6 @@ async function bootstrap() {
       credentials: true
     }
   });
-
-  // Ensure uploads directory exists
-  const uploadsDir = join(__dirname, '..', 'uploads');
-  if (!existsSync(uploadsDir)) {
-    mkdirSync(uploadsDir, { recursive: true });
-  }
-
-  // Serve uploaded files statically
-  app.use('/uploads', express.static(uploadsDir));
 
   app.use(cookieParser());
   app.useGlobalPipes(

@@ -9,6 +9,10 @@ const attachmentFields = {
   mimeType: true,
   size: true,
   url: true,
+  publicId: true,
+  resourceType: true,
+  fileType: true,
+  uploaderId: true,
   createdAt: true
 } satisfies Prisma.AttachmentSelect;
 
@@ -138,8 +142,9 @@ export class MessagingService {
 
     const trimmedContent = content.trim();
     const plainContent = trimmedContent.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+    const uniqueAttachmentIds = [...new Set(attachmentIds ?? [])];
 
-    if (!plainContent && (!attachmentIds || attachmentIds.length === 0)) {
+    if (!plainContent && uniqueAttachmentIds.length === 0) {
       throw new BadRequestException('Message cannot be empty.');
     }
 
@@ -147,16 +152,49 @@ export class MessagingService {
       throw new BadRequestException('Message is too long.');
     }
 
-    const message = await this.prisma.message.create({
-      data: {
-        conversationId,
-        senderId: currentUserId,
-        content: trimmedContent,
-        attachments: attachmentIds?.length
-          ? { connect: attachmentIds.map((id) => ({ id })) }
-          : undefined
-      },
-      include: messageInclude
+    if (uniqueAttachmentIds.length > 10) {
+      throw new BadRequestException('You can attach up to 10 files to a message.');
+    }
+
+    const message = await this.prisma.$transaction(async (tx) => {
+      if (uniqueAttachmentIds.length > 0) {
+        const claimableAttachments = await tx.attachment.findMany({
+          where: {
+            id: { in: uniqueAttachmentIds },
+            uploaderId: currentUserId,
+            messageId: null
+          },
+          select: { id: true }
+        });
+
+        if (claimableAttachments.length !== uniqueAttachmentIds.length) {
+          throw new BadRequestException('One or more attachments could not be used for this message.');
+        }
+      }
+
+      const createdMessage = await tx.message.create({
+        data: {
+          conversationId,
+          senderId: currentUserId,
+          content: trimmedContent
+        }
+      });
+
+      if (uniqueAttachmentIds.length > 0) {
+        await tx.attachment.updateMany({
+          where: {
+            id: { in: uniqueAttachmentIds },
+            uploaderId: currentUserId,
+            messageId: null
+          },
+          data: { messageId: createdMessage.id }
+        });
+      }
+
+      return tx.message.findUniqueOrThrow({
+        where: { id: createdMessage.id },
+        include: messageInclude
+      });
     });
 
     await this.prisma.conversation.update({
