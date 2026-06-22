@@ -13,22 +13,41 @@ type MentionDropdownProps = {
   onClose: () => void;
   /** Users to exclude from the list (e.g., self) */
   excludeUserIds?: string[];
-  /** The editor element — used to compute cursor position */
+  /** The editor element — used as fallback for positioning */
   editorElement: HTMLDivElement | null;
+  /** Cursor bounding rect captured at the moment the mention was detected.
+   *  Provides reliable positioning without re-reading window.getSelection()
+   *  (which can be stale by the time the effect runs). */
+  cursorRect: DOMRect | null;
 };
 
 const SEARCH_DEBOUNCE_MS = 150;
 const DROPDOWN_WIDTH = 320;
 const DROPDOWN_HEIGHT = 288;
 const GAP = 6;
+/** Offset from the cursor to the dropdown's left edge, so the connector
+ *  triangle has room to appear directly below/above the cursor. */
+const CURSOR_OFFSET = 10;
+const CONNECTOR_WIDTH = 10;
+const CONNECTOR_HALF = CONNECTOR_WIDTH / 2;
 
 /**
  * Compute fixed-position style for the dropdown so it appears
  * near the cursor while staying within the viewport.
- * Returns both the style and whether the dropdown is placed above the cursor.
+ * Returns the style, whether the dropdown is placed above the cursor,
+ * and the horizontal offset (px) for the connector triangle's left edge
+ * relative to the dropdown.
  */
-function getDropdownPosition(rect: DOMRect): { style: React.CSSProperties; above: boolean } {
-  let left = Math.round(rect.left);
+function getDropdownPosition(rect: DOMRect): {
+  style: React.CSSProperties;
+  above: boolean;
+  /** The connector's `left` CSS value relative to the dropdown */
+  connectorLeft: number;
+} {
+  // Position the dropdown so the connector can sit directly below the cursor.
+  // The cursor is at `rect.left` (collapsed range→0 width, but some UAs return
+  // a tiny rect). We inset the dropdown a bit so the connector is visible.
+  let left = Math.round(rect.left - CURSOR_OFFSET);
   let top = Math.round(rect.bottom + GAP);
   let above = false;
 
@@ -53,6 +72,13 @@ function getDropdownPosition(rect: DOMRect): { style: React.CSSProperties; above
     }
   }
 
+  // Calculate where the cursor center falls relative to the dropdown's left edge
+  const cursorCenterInDropdown = rect.left - left + rect.width / 2;
+  // The connector's left edge should center on the cursor
+  let connectorLeft = Math.round(cursorCenterInDropdown - CONNECTOR_HALF);
+  // Clamp so the connector stays visibly within the dropdown's bounds
+  connectorLeft = Math.max(6, Math.min(connectorLeft, DROPDOWN_WIDTH - CONNECTOR_WIDTH - 6));
+
   return {
     style: {
       position: 'fixed',
@@ -60,7 +86,8 @@ function getDropdownPosition(rect: DOMRect): { style: React.CSSProperties; above
       top,
       zIndex: 100
     },
-    above
+    above,
+    connectorLeft
   };
 }
 
@@ -70,45 +97,65 @@ export default function MentionDropdown({
   onSelect,
   onClose,
   excludeUserIds = [],
-  editorElement
+  editorElement,
+  cursorRect
 }: MentionDropdownProps) {
   const [results, setResults] = useState<Teammate[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [positionStyle, setPositionStyle] = useState<React.CSSProperties | undefined>(undefined);
   const [positionAbove, setPositionAbove] = useState(false);
+  const [connectorLeft, setConnectorLeft] = useState<number>(14);
   const listRef = useRef<HTMLDivElement | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // Compute position from the current selection in a layout effect
-  // so the dropdown is positioned before the browser paints.
-  // Re-runs when query changes so the dropdown tracks the cursor as the user types.
+  // Compute position from the cursor rect captured at detection time.
+  // This avoids any timing issues with re-reading window.getSelection()
+  // (which may be stale by the time the layout effect runs).
+  // Re-runs when cursorRect changes so the position tracks the cursor.
   useLayoutEffect(() => {
+    if (cursorRect && cursorRect.width >= 0 && cursorRect.height >= 0) {
+      const { style, above, connectorLeft } = getDropdownPosition(cursorRect);
+      const originY = above ? 'bottom' : 'top';
+      setPositionStyle({ ...style, transformOrigin: `${connectorLeft + 5}px ${originY}` });
+      setPositionAbove(above);
+      setConnectorLeft(connectorLeft);
+      return;
+    }
+
+    // Fallback: try window.getSelection() as a second attempt
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0);
       if (editorElement && editorElement.contains(range.commonAncestorContainer)) {
         const rect = range.getBoundingClientRect();
         if (rect && rect.width >= 0 && rect.height >= 0) {
-          const { style, above } = getDropdownPosition(rect);
-          setPositionStyle(style);
+          const { style, above, connectorLeft } = getDropdownPosition(rect);
+          const originY = above ? 'bottom' : 'top';
+          setPositionStyle({ ...style, transformOrigin: `${connectorLeft + 5}px ${originY}` });
           setPositionAbove(above);
+          setConnectorLeft(connectorLeft);
           return;
         }
       }
     }
-    // Fallback: position relative to the editor
+
+    // Final fallback: position relative to the editor
     if (editorElement) {
       const rect = editorElement.getBoundingClientRect();
+      const fallbackConnectorLeft = 14;
+      // Position below the editor instead of above
       setPositionStyle({
         position: 'fixed',
         left: Math.max(8, Math.round(rect.left + 8)),
-        top: Math.max(8, Math.round(rect.top - 8 - 288)),
-        zIndex: 100
+        top: Math.round(rect.bottom + 6),
+        zIndex: 100,
+        transformOrigin: `${fallbackConnectorLeft + 5}px top`
       });
-      setPositionAbove(true);
+      setPositionAbove(false);
+      setConnectorLeft(fallbackConnectorLeft);
     }
-  }, [editorElement, query]);
+  }, [cursorRect, editorElement, query]);
 
   useEffect(() => {
     if (!query) {
@@ -284,7 +331,10 @@ export default function MentionDropdown({
       style={positionStyle}
     >
       {/* Visual connector triangle pointing toward the cursor */}
-      <div className={`mention-dropdown-connector${positionAbove ? ' mention-dropdown-connector-above' : ''}`} />
+      <div
+        className={`mention-dropdown-connector${positionAbove ? ' mention-dropdown-connector-above' : ''}`}
+        style={{ left: connectorLeft }}
+      />
       {dropdownContent}
     </div>
   );

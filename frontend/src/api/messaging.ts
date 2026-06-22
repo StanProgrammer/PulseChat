@@ -43,6 +43,7 @@ export type DirectMessage = {
   updatedAt: string;
   sender: Teammate;
   attachments: AttachmentInfo[];
+  conversationId?: string;
 };
 
 export function searchWorkspaceUsers(accessToken: string, query: string) {
@@ -85,6 +86,21 @@ export function sendDirectMessage(accessToken: string, conversationId: string, c
     method: 'POST',
     headers: authHeaders(accessToken),
     body: JSON.stringify({ content, attachmentIds })
+  });
+}
+
+export function updateMessageApi(accessToken: string, conversationId: string, messageId: string, content: string) {
+  return apiRequest<{ message: DirectMessage }>(`/messaging/direct-conversations/${conversationId}/messages/${messageId}`, {
+    method: 'PATCH',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ content })
+  });
+}
+
+export function deleteMessageApi(accessToken: string, conversationId: string, messageId: string) {
+  return apiRequest<{ deletedMessageId: string; conversationId: string }>(`/messaging/direct-conversations/${conversationId}/messages/${messageId}`, {
+    method: 'DELETE',
+    headers: authHeaders(accessToken)
   });
 }
 

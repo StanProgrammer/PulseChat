@@ -36,6 +36,7 @@ import {
   formatMessageTime,
   getInitials,
   normalizeLinkUrl,
+  prepareContentForEditing,
   sanitizeMessageHtml,
   socketStatusLabel
 } from './workspace/messageUtils';
@@ -127,6 +128,8 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     setQuery,
     socketStatus,
     startConversation,
+    updateMessage,
+    deleteMessage,
     updateDraft
   } = useDirectMessaging(accessToken, user);
   const initials = getInitials(user.name);
@@ -362,6 +365,10 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
                     messages={messages}
                     participant={activeParticipant}
                     user={user}
+                    accessToken={accessToken}
+                    conversationId={activeConversation?.id}
+                    onUpdateMessage={updateMessage}
+                    onDeleteMessage={deleteMessage}
                     onMentionClick={(userId, userName) => {
                       // Start a DM with the mentioned user
                       const teammate: Teammate = {
@@ -412,19 +419,48 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
 
 /* ─── Message stream (conversation messages only) ─── */
 
+const EDIT_TEXT_FORMATS = [
+  { label: 'B', title: 'Bold', command: 'bold', styleClass: 'bold' },
+  { label: 'I', title: 'Italic', command: 'italic', styleClass: 'italic' },
+  { label: 'U', title: 'Underline', command: 'underline', styleClass: 'underline' },
+  { label: 'S', title: 'Strikethrough', command: 'strikeThrough', styleClass: 'strikethrough' }
+] as const;
+
 function MessageStream({
   messages,
   participant,
   user,
+  accessToken,
+  conversationId,
+  onUpdateMessage,
+  onDeleteMessage,
   onMentionClick
 }: {
   messages: RealtimeMessage[];
   participant: Teammate;
   user: User;
+  accessToken: string;
+  conversationId?: string;
+  onUpdateMessage: (messageId: string, content: string, conversationId: string) => void;
+  onDeleteMessage: (messageId: string, conversationId: string) => void;
   onMentionClick?: (userId: string, userName: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isInitialLoad = useRef(true);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editInitialContent, setEditInitialContent] = useState('');
+  const [openMenuMessageId, setOpenMenuMessageId] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const editEditorRef = useRef<HTMLDivElement | null>(null);
+  const editMentionMatchRef = useRef<MentionMatch | null>(null);
+  const [editMentionOpen, setEditMentionOpen] = useState(false);
+  const [editMentionQuery, setEditMentionQuery] = useState('');
+  const [editMentionMatch, setEditMentionMatch] = useState<MentionMatch | null>(null);
+  const [editMentionCursorRect, setEditMentionCursorRect] = useState<DOMRect | null>(null);
+  const [editMarks, setEditMarks] = useState<Record<string, boolean>>({
+    bold: false, italic: false, underline: false, strikeThrough: false
+  });
+  const editEditorInitializedRef = useRef(false);
 
   const scrollToBottom = useCallback((smooth: boolean) => {
     const el = scrollRef.current;
@@ -442,11 +478,10 @@ function MessageStream({
     isInitialLoad.current = true;
   }, [participant.id]);
 
-  // Scroll when messages arrive — handles initial load, sent messages, and received messages
+  // Scroll when messages arrive
   useEffect(() => {
     if (!scrollRef.current || !messages.length) return;
 
-    // If this is the initial load for a new conversation, scroll instantly and exit
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
       scrollToBottom(false);
@@ -458,22 +493,268 @@ function MessageStream({
     const isOwnMessage = lastMessage.sender.id === user.id;
     const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
 
-    // Always scroll for own (sent) messages; for received, only if user is near bottom
     if (isOwnMessage || isNearBottom) {
       scrollToBottom(true);
     }
   }, [messages, scrollToBottom, user.id]);
 
+  // Set editor innerHTML directly on the DOM when entering edit mode.
+  // We intentionally avoid dangerouslySetInnerHTML here because React
+  // would re-apply the original content on every re-render (e.g. when
+  // formatting marks update, mention dropdown opens, etc.), which resets
+  // the cursor position and wipes out the user's edits.
+  // Instead, we set innerHTML once via the DOM ref in a useEffect.
+  useEffect(() => {
+    if (editingMessageId && editInitialContent && editEditorRef.current) {
+      editEditorRef.current.innerHTML = editInitialContent;
+      editEditorInitializedRef.current = true;
+    }
+    if (!editingMessageId) {
+      editEditorInitializedRef.current = false;
+    }
+  }, [editingMessageId, editInitialContent]);
+
+  // Focus the edit editor when entering edit mode (must run AFTER content
+  // is set, so both effects depend on editingMessageId — React runs them
+  // in definition order).
+  useEffect(() => {
+    if (editingMessageId && editEditorRef.current && editEditorInitializedRef.current) {
+      editEditorRef.current.focus();
+      const sel = window.getSelection();
+      if (sel) {
+        const range = document.createRange();
+        range.selectNodeContents(editEditorRef.current);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+  }, [editingMessageId]);
+
+  // Track formatting marks for edit editor
+  useEffect(() => {
+    if (!editingMessageId) return;
+    const updateMarks = () => {
+      const editor = editEditorRef.current;
+      const sel = window.getSelection();
+      if (!editor || !sel?.rangeCount || !editor.contains(sel.anchorNode)) return;
+      setEditMarks({
+        bold: document.queryCommandState('bold'),
+        italic: document.queryCommandState('italic'),
+        underline: document.queryCommandState('underline'),
+        strikeThrough: document.queryCommandState('strikeThrough')
+      });
+    };
+    document.addEventListener('selectionchange', updateMarks);
+    return () => document.removeEventListener('selectionchange', updateMarks);
+  }, [editingMessageId]);
+
+  // Close kebab menu on outside click
+  useEffect(() => {
+    if (!openMenuMessageId) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('.message-kebab-menu')) return;
+      if (target instanceof Element && target.closest('.message-kebab-trigger')) return;
+      setOpenMenuMessageId(null);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [openMenuMessageId]);
+
+  // Close delete confirm on Escape
+  useEffect(() => {
+    if (!deleteConfirmId) return;
+    const handleKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setDeleteConfirmId(null);
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [deleteConfirmId]);
+
+  const startEditing = (message: RealtimeMessage) => {
+    const prepared = prepareContentForEditing(message.content);
+    setEditInitialContent(prepared);
+    setEditingMessageId(message.id);
+    setOpenMenuMessageId(null);
+  };
+
+
+
+  const closeEditMention = useCallback(() => {
+    setEditMentionOpen(false);
+    setEditMentionMatch(null);
+    setEditMentionQuery('');
+    setEditMentionCursorRect(null);
+  }, []);
+
+  const cancelEditing = () => {
+    setEditingMessageId(null);
+    setEditInitialContent('');
+    closeEditMention();
+  };
+
+  const saveEdit = () => {
+    if (!editingMessageId || !conversationId) return;
+    const editor = editEditorRef.current;
+    if (!editor) return;
+    const rawHtml = editor.innerHTML;
+    const textContent = (editor.textContent || '').trim();
+    if (!textContent) return;
+    const sanitized = sanitizeMessageHtml(rawHtml);
+    onUpdateMessage(editingMessageId, sanitized, conversationId);
+    setEditingMessageId(null);
+    setEditInitialContent('');
+    closeEditMention();
+  };
+
+  const handleEditInput = () => {
+    const editor = editEditorRef.current;
+    if (!editor) {
+      closeEditMention();
+      return;
+    }
+   
+    // Check for @mention
+    const match = detectMentionAtCursor(editor);
+    if (match) {
+      editMentionMatchRef.current = match;
+      setEditMentionMatch(match);
+      setEditMentionQuery(match.query);
+      const sel = window.getSelection();
+      let cursorRect: DOMRect | null = null;
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        if (editor.contains(range.commonAncestorContainer)) {
+          cursorRect = range.getBoundingClientRect();
+        }
+      }
+      setEditMentionCursorRect(cursorRect);
+      setEditMentionOpen(true);
+    } else {
+      closeEditMention();
+    }
+  };
+
+  const handleEditMentionSelect = useCallback((selection: MentionSelection) => {
+    const editor = editEditorRef.current;
+    const match = editMentionMatchRef.current;
+    if (!editor || !match) return;
+    insertMentionAtCursor(editor, match, selection);
+    closeEditMention();
+    editor.focus();
+  }, [closeEditMention]);
+
+  const handleEditPaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const html = event.clipboardData.getData('text/html');
+    const text = event.clipboardData.getData('text/plain');
+    const content = html ? sanitizeMessageHtml(html) : escapeHtml(text).replace(/\r?\n/g, '<br>');
+    document.execCommand('insertHTML', false, content);
+  };
+
+  const handleEditKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (editMentionOpen && (event.key === 'Enter' || event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Escape')) {
+      return; // handled by MentionDropdown
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      saveEdit();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelEditing();
+    }
+  };
+
+  const toggleEditFormat = (command: string) => {
+    const editor = editEditorRef.current;
+    if (!editor) return;
+    editor.focus();
+    document.execCommand(command);
+    setEditMarks({
+      bold: document.queryCommandState('bold'),
+      italic: document.queryCommandState('italic'),
+      underline: document.queryCommandState('underline'),
+      strikeThrough: document.queryCommandState('strikeThrough')
+    });
+  };
+
+  const confirmDelete = (messageId: string) => {
+    setDeleteConfirmId(messageId);
+    setOpenMenuMessageId(null);
+  };
+
+  const executeDelete = () => {
+    if (!deleteConfirmId || !conversationId) return;
+    onDeleteMessage(deleteConfirmId, conversationId);
+    setDeleteConfirmId(null);
+  };
+
+  const isEdited = (message: RealtimeMessage) => {
+    return message.updatedAt !== message.createdAt;
+  };
+
+  const hasEditContent = () => {
+    if (!editEditorRef.current) return false;
+    return (editEditorRef.current.textContent || '').trim().length > 0;
+  };
+
+  const isEditUnchanged = (originalContent: string) => {
+    const editor = editEditorRef.current;
+    if (!editor) return true;
+    // Both sides must use the same preparation to account for
+    // contenteditable attribute differences on mention spans.
+    // prepareContentForEditing strips contenteditable="false" from
+    // mentions, matching what the editor DOM produces after the user
+    // interacts with it.
+    const preparedOriginal = prepareContentForEditing(originalContent);
+    return sanitizeMessageHtml(editor.innerHTML) === sanitizeMessageHtml(preparedOriginal);
+  };
+
   return (
     <div className="conversation-stream" ref={scrollRef}>
       <DateDivider label="Today" />
+
+      {/* Delete confirmation dialog */}
+      {deleteConfirmId && (
+        <div className="delete-overlay" onClick={() => setDeleteConfirmId(null)}>
+          <div className="delete-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3 className="delete-dialog-title">Delete message?</h3>
+            <p className="delete-dialog-desc">
+              This action cannot be undone. The message will be removed for everyone.
+            </p>
+            <div className="delete-dialog-actions">
+              <button
+                className="delete-dialog-secondary"
+                onClick={() => setDeleteConfirmId(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="delete-dialog-primary"
+                onClick={executeDelete}
+                type="button"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {messages.length ? (
         messages.map((message, index) => {
           const isOwn = message.sender.id === user.id;
+          const isEditing = editingMessageId === message.id;
+          const menuOpen = openMenuMessageId === message.id;
+          const edited = isEdited(message);
+          const originalMessage = message; // keep ref for comparison
 
           return (
             <article
-              className={`message-card ${isOwn ? 'message-card-own' : ''}`}
+              className={`message-card ${isOwn ? 'message-card-own' : ''} ${isEditing ? 'message-card-editing' : ''}`}
               key={message.id}
               style={{ animationDelay: `${index * 55}ms` }}
             >
@@ -481,43 +762,161 @@ function MessageStream({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
                   <h3 className="text-sm font-black leading-5">{isOwn ? 'You' : message.sender.name}</h3>
-                  <span className="text-xs font-bold text-[#8a939d]">{formatMessageTime(message.createdAt)}</span>
+                  <span className="text-xs font-bold text-[#8a939d]">
+                    {formatMessageTime(message.createdAt)}
+                    {edited && <span className="edited-label"> (edited)</span>}
+                  </span>
                   {message.status && message.status !== 'sent' && (
                     <span className={`message-status message-status-${message.status}`}>
                       {message.status}
                     </span>
                   )}
                 </div>
-                {message.content && (
-                  <div
-                    className="message-content mt-0.5 text-[0.92rem] leading-6 text-[#343940]"
-                    dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }}
-                    onClick={(event) => {
-                      // Click on mention span — open a DM with that user
-                      const target = event.target;
-                      if (
-                        target instanceof HTMLElement &&
-                        target.getAttribute('data-type') === 'mention'
-                      ) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        const userId = target.getAttribute('data-user-id');
-                        const userName = target.getAttribute('data-user-name');
-                        if (userId && userName && onMentionClick) {
-                          onMentionClick(userId, userName);
-                        }
-                      }
-                    }}
-                  />
-                )}
-                {message.attachments && message.attachments.length > 0 && (
-                  <div className="message-attachments">
-                    {message.attachments.map((attachment) => (
-                      <AttachmentCard attachment={attachment} key={attachment.id} />
-                    ))}
+
+                {isEditing ? (
+                  <div className="message-edit-shell">
+                    {/* Formatting toolbar */}
+                    <div className="message-edit-toolbar" aria-label="Edit formatting tools">
+                      {EDIT_TEXT_FORMATS.map((opt) => (
+                        <button
+                          aria-pressed={editMarks[opt.command]}
+                          className={`composer-tool ${editMarks[opt.command] ? 'composer-tool-active' : ''}`}
+                          key={opt.title}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => toggleEditFormat(opt.command)}
+                          title={opt.title}
+                          type="button"
+                        >
+                          <span className={`composer-tool-${opt.styleClass}`}>{opt.label}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div
+                      className="message-edit-editor"
+                      contentEditable
+                      onInput={handleEditInput}
+                      onKeyDown={handleEditKeyDown}
+                      onPaste={handleEditPaste}
+                      ref={editEditorRef}
+                      role="textbox"
+                      suppressContentEditableWarning
+                    />
+
+                    {/* @mention dropdown for edit editor */}
+                    {editMentionOpen && editMentionMatch && (
+                      <MentionDropdown
+                        accessToken={accessToken}
+                        query={editMentionQuery}
+                        cursorRect={editMentionCursorRect}
+                        excludeUserIds={[user.id]}
+                        onSelect={handleEditMentionSelect}
+                        onClose={closeEditMention}
+                        editorElement={editEditorRef.current}
+                      />
+                    )}
+
+                    <div className="message-edit-actions">
+                      <span className="message-edit-hint">
+                        Esc to cancel &middot; Enter to save
+                      </span>
+                      <div className="message-edit-buttons">
+                        <button
+                          className="message-edit-cancel"
+                          onClick={cancelEditing}
+                          type="button"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          className="message-edit-save"
+                          disabled={!hasEditContent() || isEditUnchanged(originalMessage.content)}
+                          onClick={saveEdit}
+                          type="button"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </div>
                   </div>
+                ) : (
+                  <>
+                    {message.content && (
+                      <div
+                        className="message-content mt-0.5 text-[0.92rem] leading-6 text-[#343940]"
+                        dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }}
+                        onClick={(event) => {
+                          const target = event.target;
+                          if (
+                            target instanceof HTMLElement &&
+                            target.getAttribute('data-type') === 'mention'
+                          ) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            const userId = target.getAttribute('data-user-id');
+                            const userName = target.getAttribute('data-user-name');
+                            if (userId && userName && onMentionClick) {
+                              onMentionClick(userId, userName);
+                            }
+                          }
+                        }}
+                      />
+                    )}
+                    {message.attachments && message.attachments.length > 0 && (
+                      <div className="message-attachments">
+                        {message.attachments.map((attachment) => (
+                          <AttachmentCard attachment={attachment} key={attachment.id} />
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
+
+              {/* Kebab menu for own messages (not while editing) */}
+              {isOwn && !isEditing && (
+                <div className="message-kebab-wrapper">
+                  <button
+                    aria-label="Message actions"
+                    className={`message-kebab-trigger ${menuOpen ? 'message-kebab-trigger-open' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMenuMessageId(menuOpen ? null : message.id);
+                    }}
+                    type="button"
+                  >
+                    <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                      <circle cx="8" cy="3" r="1.5" />
+                      <circle cx="8" cy="8" r="1.5" />
+                      <circle cx="8" cy="13" r="1.5" />
+                    </svg>
+                  </button>
+                  {menuOpen && (
+                    <div className="message-kebab-menu">
+                      <button
+                        className="message-kebab-item"
+                        onClick={() => startEditing(message)}
+                        type="button"
+                      >
+                        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M11 2l3 3-9 9H2v-3z" />
+                        </svg>
+                        Edit message
+                      </button>
+                      <button
+                        className="message-kebab-item message-kebab-item-danger"
+                        onClick={() => confirmDelete(message.id)}
+                        type="button"
+                      >
+                        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M2 4h12m-2 0l-.7 8.4a2 2 0 01-2 1.6H6.7a2 2 0 01-2-1.6L4 4m2 0V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5V4" />
+                        </svg>
+                        Delete message
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </article>
           );
         })
@@ -530,6 +929,8 @@ function MessageStream({
     </div>
   );
 }
+
+
 
 /* ─── File preview chips (compact horizontal layout) ─── */
 
@@ -703,6 +1104,7 @@ function MessageComposer({
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState('');
   const [mentionMatch, setMentionMatch] = useState<MentionMatch | null>(null);
+  const [mentionCursorRect, setMentionCursorRect] = useState<DOMRect | null>(null);
 
   const syncEditorDraft = () => {
     const editor = editorRef.current;
@@ -714,6 +1116,7 @@ function MessageComposer({
     setMentionOpen(false);
     setMentionMatch(null);
     setMentionQuery('');
+    setMentionCursorRect(null);
   }, []);
 
   const handleMentionSelect = useCallback((selection: MentionSelection) => {
@@ -747,6 +1150,16 @@ function MessageComposer({
       setMentionMatch(match);
       mentionMatchRef.current = match;
       setMentionQuery(match.query);
+      // Capture cursor position immediately while the selection is reliable
+      const sel = window.getSelection();
+      let cursorRect: DOMRect | null = null;
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        if (editor.contains(range.commonAncestorContainer)) {
+          cursorRect = range.getBoundingClientRect();
+        }
+      }
+      setMentionCursorRect(cursorRect);
       setMentionOpen(true);
     } else {
       closeMentionDropdown();
@@ -1110,6 +1523,7 @@ function MessageComposer({
           <MentionDropdown
             accessToken={accessToken}
             query={mentionQuery}
+            cursorRect={mentionCursorRect}
             excludeUserIds={[currentUserId]}
             onSelect={handleMentionSelect}
             onClose={closeMentionDropdown}

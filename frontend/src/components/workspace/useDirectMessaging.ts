@@ -15,6 +15,8 @@ import {
   createClientMessageId,
   markMessageFailed,
   mergeRealtimeMessage,
+  mergeUpdatedMessage,
+  removeDeletedMessage,
   sanitizeMessageHtml,
   upsertConversation
 } from './messageUtils';
@@ -74,6 +76,16 @@ export function useDirectMessaging(accessToken: string, user: User) {
     socket.on('message:new', ({ conversationId, message, clientMessageId }) => {
       if (conversationId === activeConversationIdRef.current) {
         setMessages((current) => mergeRealtimeMessage(current, message, clientMessageId));
+      }
+    });
+    socket.on('message:updated', ({ conversationId, message }) => {
+      if (conversationId === activeConversationIdRef.current) {
+        setMessages((current) => mergeUpdatedMessage(current, message));
+      }
+    });
+    socket.on('message:deleted', ({ conversationId, messageId }) => {
+      if (conversationId === activeConversationIdRef.current) {
+        setMessages((current) => removeDeletedMessage(current, messageId));
       }
     });
     socket.on('conversation:updated', ({ conversation }) => {
@@ -213,6 +225,64 @@ export function useDirectMessaging(accessToken: string, user: User) {
     setDraftText(text);
   }, []);
 
+  const updateMessage = useCallback((messageId: string, content: string, conversationId: string) => {
+    const socket = socketRef.current;
+    if (!socket || socketStatus !== 'connected') {
+      setError('Realtime connection is offline. Reconnect before editing.');
+      return;
+    }
+
+    // Optimistically update the message in place
+    setMessages((current) =>
+      current.map((msg) =>
+        msg.id === messageId
+          ? { ...msg, content, status: 'sending' as const }
+          : msg
+      )
+    );
+
+    socket.emit('message:update', { messageId, content }, (response) => {
+      if (!response?.ok) {
+        setMessages((current) => current.map((msg) =>
+          msg.id === messageId ? { ...msg, status: 'failed' as const } : msg
+        ));
+        setError(response?.message || 'Unable to edit this message.');
+      }
+    });
+  }, [socketStatus]);
+
+  const deleteMessage = useCallback((messageId: string, conversationId: string) => {
+    const socket = socketRef.current;
+    if (!socket || socketStatus !== 'connected') {
+      setError('Realtime connection is offline. Reconnect before deleting.');
+      return;
+    }
+
+    // Stash the message for rollback, then optimistically remove
+    let stashedMessage: RealtimeMessage | null = null;
+    setMessages((current) => {
+      const msg = current.find((m) => m.id === messageId);
+      stashedMessage = msg || null;
+      return current.filter((msg) => msg.id !== messageId);
+    });
+
+    socket.emit('message:delete', { messageId }, (response) => {
+      if (!response?.ok) {
+        // Rollback: restore the message
+        if (stashedMessage) {
+          setMessages((current) => {
+            // Only restore if not already re-added by socket event
+            if (current.some((m) => m.id === messageId)) return current;
+            return [...current, stashedMessage!].sort(
+              (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+            );
+          });
+        }
+        setError(response?.message || 'Unable to delete this message.');
+      }
+    });
+  }, [socketStatus]);
+
   const sendMessage = useCallback((event: FormEvent<HTMLFormElement>, options?: { attachmentIds?: string[]; pendingAttachments?: AttachmentInfo[] }) => {
     event.preventDefault();
 
@@ -293,6 +363,8 @@ export function useDirectMessaging(accessToken: string, user: User) {
     socketStatus,
     startConversation,
     sendMessage,
+    updateMessage,
+    deleteMessage,
     updateDraft
   };
 }

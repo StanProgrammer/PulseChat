@@ -2687,6 +2687,341 @@ button:focus-visible {
   }
 }
 
+/* ── (edited) label on messages ── */
+
+.edited-label {
+  color: #8a939d;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+/* ── Kebab menu (three-dot actions) ── */
+
+.message-kebab-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: 0.25rem;
+  align-self: flex-start;
+}
+
+.message-kebab-trigger {
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: #8a939d;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+  cursor: pointer;
+}
+
+.message-card:hover .message-kebab-trigger,
+.message-kebab-trigger-open {
+  opacity: 1;
+}
+
+.message-kebab-trigger:hover,
+.message-kebab-trigger-open {
+  background: #eef1f4;
+  border-color: #d9dee4;
+  color: #343940;
+}
+
+.message-kebab-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  min-width: 9rem;
+  border: 1px solid #d9dee4;
+  border-radius: 0.6rem;
+  background: #ffffff;
+  box-shadow:
+    0 12px 32px rgb(23 25 28 / 0.16),
+    0 4px 12px rgb(23 25 28 / 0.08);
+  padding: 0.25rem;
+  animation: kebab-in 100ms ease both;
+  transform-origin: top right;
+}
+
+@keyframes kebab-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.message-kebab-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.45rem;
+  border: 0;
+  border-radius: 0.42rem;
+  background: transparent;
+  color: #343940;
+  padding: 0.38rem 0.55rem;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 100ms ease;
+}
+
+.message-kebab-item:hover {
+  background: #eef1f4;
+}
+
+.message-kebab-item-danger {
+  color: #e01e5a;
+}
+
+.message-kebab-item-danger:hover {
+  background: rgb(224 30 90 / 0.08);
+}
+
+/* ── Edit mode ── */
+
+.message-card-editing {
+  background: #f8fafb !important;
+}
+
+.message-edit-shell {
+  margin-top: 0.32rem;
+}
+
+.message-edit-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.08rem;
+  margin-bottom: 0.3rem;
+}
+
+.message-edit-toolbar .composer-tool {
+  width: 1.95rem;
+  min-width: 1.95rem;
+  height: 1.8rem;
+  font-size: 0.72rem;
+}
+
+.message-edit-hint {
+  flex: 1;
+  color: #8a939d;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  user-select: none;
+}
+
+.message-edit-buttons {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.message-edit-editor {
+  min-height: 2.8rem;
+  max-height: 8rem;
+  overflow-y: auto;
+  border: 1px solid #cfd3d7;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: #1d1c1d;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.message-edit-editor:focus {
+  border-color: #611f69;
+  box-shadow: 0 0 0 3px rgb(97 31 105 / 0.12);
+}
+
+.message-edit-editor p {
+  margin: 0;
+}
+
+.message-edit-editor p + p {
+  margin-top: 0.28rem;
+}
+
+.message-edit-editor span[data-type="mention"] {
+  /* In edit mode, mentions are editable spans. Keep the visual hint
+     but use cursor: text so the user can click and edit naturally. */
+  display: inline;
+  border-radius: 0.28rem;
+  background: rgb(54 197 240 / 0.14);
+  color: #16708d;
+  font-weight: 800;
+  padding: 0.06rem 0.2rem;
+  cursor: text;
+  unicode-bidi: -moz-plaintext;
+  unicode-bidi: plaintext;
+}
+
+.message-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.message-edit-cancel,
+.message-edit-save {
+  min-height: 1.8rem;
+  border-radius: 0.4rem;
+  padding: 0 0.65rem;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 900;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    transform 100ms ease;
+}
+
+.message-edit-cancel {
+  border: 0;
+  background: transparent;
+  color: #616061;
+}
+
+.message-edit-cancel:hover {
+  background: #f3f0f3;
+  color: #1d1c1d;
+}
+
+.message-edit-save {
+  border: 0;
+  background: #007a5a;
+  color: #ffffff;
+}
+
+.message-edit-save:hover:not(:disabled) {
+  background: #006e50;
+}
+
+.message-edit-save:disabled {
+  background: #ddd9df;
+  color: #8f8a93;
+  cursor: not-allowed;
+}
+
+/* ── Delete confirmation dialog ── */
+
+.delete-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(23 25 28 / 0.46);
+  animation: overlay-in 150ms ease both;
+}
+
+.delete-dialog {
+  width: min(22rem, calc(100vw - 2rem));
+  border: 1px solid #d9dee4;
+  border-radius: 0.85rem;
+  background: #ffffff;
+  padding: 1.25rem;
+  box-shadow:
+    0 24px 56px rgb(23 25 28 / 0.28),
+    0 8px 20px rgb(23 25 28 / 0.1);
+  animation: dialog-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.delete-dialog-title {
+  margin: 0 0 0.35rem;
+  color: #17191c;
+  font-size: 1.1rem;
+  font-weight: 950;
+}
+
+.delete-dialog-desc {
+  margin: 0 0 1rem;
+  color: #606975;
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.delete-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.delete-dialog-secondary,
+.delete-dialog-primary {
+  min-height: 2.1rem;
+  border-radius: 0.45rem;
+  padding: 0 0.8rem;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 900;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    transform 100ms ease;
+}
+
+.delete-dialog-secondary {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #616061;
+}
+
+.delete-dialog-secondary:hover {
+  background: #f3f0f3;
+  color: #1d1c1d;
+}
+
+.delete-dialog-primary {
+  border: 0;
+  background: #e01e5a;
+  color: #ffffff;
+}
+
+.delete-dialog-primary:hover {
+  background: #c7194c;
+}
+
 @media (prefers-color-scheme: dark) {
   .emoji-popover {
     --emoji-surface: #1f2227;
@@ -2818,6 +3153,40 @@ button:focus-visible {
   .message-attachment {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .message-edit-actions {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .message-edit-hint {
+    flex: 1 1 100%;
+    order: 2;
+    font-size: 0.62rem;
+  }
+
+  .message-edit-buttons {
+    order: 1;
+  }
+
+  .message-edit-editor {
+    min-height: 2.4rem;
+    max-height: 6rem;
+    font-size: 0.85rem;
+    padding: 0.35rem 0.5rem;
+  }
+
+  .message-edit-toolbar {
+    gap: 0.06rem;
+    margin-bottom: 0.22rem;
+  }
+
+  .message-edit-toolbar .composer-tool {
+    width: 1.7rem;
+    min-width: 1.7rem;
+    height: 1.6rem;
+    font-size: 0.68rem;
   }
 
   .send-button {

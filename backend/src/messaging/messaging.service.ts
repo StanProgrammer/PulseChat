@@ -182,6 +182,71 @@ export class MessagingService {
 
 
 
+  async updateMessage(currentUserId: string, messageId: string, content: string) {
+    const trimmedContent = content.trim();
+    const plainContent = trimmedContent.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+
+    if (!plainContent) {
+      throw new BadRequestException('Message cannot be empty.');
+    }
+
+    if (trimmedContent.length > 4000) {
+      throw new BadRequestException('Message is too long.');
+    }
+
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { id: true, senderId: true, conversationId: true }
+    });
+
+    if (!message) {
+      throw new NotFoundException('Message could not be found.');
+    }
+
+    if (message.senderId !== currentUserId) {
+      throw new ForbiddenException('You can only edit your own messages.');
+    }
+
+    const updatedMessage = await this.prisma.message.update({
+      where: { id: messageId },
+      data: { content: trimmedContent },
+      include: messageInclude
+    });
+
+    await this.prisma.conversation.update({
+      where: { id: message.conversationId },
+      data: { updatedAt: new Date() }
+    });
+
+    return { message: this.toMessage(updatedMessage) };
+  }
+
+  async deleteMessage(currentUserId: string, messageId: string) {
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { id: true, senderId: true, conversationId: true }
+    });
+
+    if (!message) {
+      throw new NotFoundException('Message could not be found.');
+    }
+
+    if (message.senderId !== currentUserId) {
+      throw new ForbiddenException('You can only delete your own messages.');
+    }
+
+    await this.prisma.message.delete({
+      where: { id: messageId }
+    });
+
+    await this.prisma.conversation.update({
+      where: { id: message.conversationId },
+      data: { updatedAt: new Date() }
+    });
+
+    return { deletedMessageId: messageId, conversationId: message.conversationId };
+  }
+
   async sendMessage(currentUserId: string, conversationId: string, content: string, attachmentIds?: string[]) {
     await this.ensureConversationMember(currentUserId, conversationId);
 
@@ -354,7 +419,8 @@ export class MessagingService {
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
       sender: message.sender,
-      attachments: message.attachments
+      attachments: message.attachments,
+      conversationId: message.conversationId
     };
   }
 

@@ -26,6 +26,8 @@ export type ServerToClientEvents = {
   'socket:ready': (payload: { userId: string }) => void;
   'socket:error': (payload: { message: string }) => void;
   'message:new': (payload: { conversationId: string; message: DirectMessage; clientMessageId?: string }) => void;
+  'message:updated': (payload: { conversationId: string; message: DirectMessage }) => void;
+  'message:deleted': (payload: { conversationId: string; messageId: string }) => void;
   'conversation:updated': (payload: { conversation: DirectConversation }) => void;
 };
 
@@ -35,5 +37,13 @@ export type ClientToServerEvents = {
   'message:send': (
     payload: { conversationId: string; content: string; clientMessageId: string; attachmentIds?: string[] },
     callback?: (response: SocketAck & { messageId?: string; clientMessageId?: string }) => void
+  ) => void;
+  'message:update': (
+    payload: { messageId: string; content: string },
+    callback?: (response: SocketAck & { messageId?: string }) => void
+  ) => void;
+  'message:delete': (
+    payload: { messageId: string },
+    callback?: (response: SocketAck & { messageId?: string }) => void
   ) => void;
 };

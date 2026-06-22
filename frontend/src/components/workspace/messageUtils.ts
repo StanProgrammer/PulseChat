@@ -22,6 +22,18 @@ export function markMessageFailed(messages: RealtimeMessage[], clientMessageId: 
   return messages.map((message) => (message.clientMessageId === clientMessageId ? { ...message, status: 'failed' as const } : message));
 }
 
+export function mergeUpdatedMessage(messages: RealtimeMessage[], serverMessage: DirectMessage) {
+  return messages.map((message) =>
+    message.id === serverMessage.id
+      ? { ...serverMessage, status: 'sent' as const, clientMessageId: message.clientMessageId }
+      : message
+  );
+}
+
+export function removeDeletedMessage(messages: RealtimeMessage[], messageId: string) {
+  return messages.filter((message) => message.id !== messageId);
+}
+
 export function createClientMessageId() {
   return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -123,6 +135,23 @@ export function escapeHtml(content: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+/**
+ * Prepare message content for the edit editor:
+ * - Removes `contenteditable="false"` from mention spans
+ *   so the browser treats them as regular editable inline elements.
+ *   This prevents cursor jumps and broken selection behavior.
+ */
+export function prepareContentForEditing(content: string): string {
+  const div = document.createElement('div');
+  div.innerHTML = content;
+
+  div.querySelectorAll('span[data-type="mention"]').forEach((span) => {
+    span.removeAttribute('contenteditable');
+  });
+
+  return div.innerHTML;
 }
 
 export function socketStatusLabel(status: SocketStatus) {

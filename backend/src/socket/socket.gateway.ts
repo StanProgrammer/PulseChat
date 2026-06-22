@@ -119,6 +119,62 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('message:update')
+  async updateMessage(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() payload: { messageId?: string; content?: string }) {
+    const user = this.requireSocketUser(client);
+    const messageId = payload?.messageId;
+    const content = payload?.content || '';
+
+    if (!messageId || !content.trim()) {
+      return { ok: false, message: 'Message id and content are required.' };
+    }
+
+    try {
+      const { message } = await this.messagingService.updateMessage(user.sub, messageId, content);
+
+      this.server.to(this.conversationRoom(message.conversationId)).emit('message:updated', {
+        conversationId: message.conversationId,
+        message
+      });
+
+      // Notify sidebar via conversation:updated
+      const memberIds = await this.messagingService.getConversationMemberIds(user.sub, message.conversationId);
+      await Promise.all(
+        memberIds.map(async (memberId) => {
+          const conversation = await this.messagingService.getDirectConversationForUser(memberId, message.conversationId);
+          this.server.to(this.userRoom(memberId)).emit('conversation:updated', { conversation });
+        })
+      );
+
+      return { ok: true, messageId: message.id };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to update message.' };
+    }
+  }
+
+  @SubscribeMessage('message:delete')
+  async deleteMessage(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() payload: { messageId?: string }) {
+    const user = this.requireSocketUser(client);
+    const messageId = payload?.messageId;
+
+    if (!messageId) {
+      return { ok: false, message: 'Message id is required.' };
+    }
+
+    try {
+      const { deletedMessageId, conversationId } = await this.messagingService.deleteMessage(user.sub, messageId);
+
+      this.server.to(this.conversationRoom(conversationId)).emit('message:deleted', {
+        conversationId,
+        messageId: deletedMessageId
+      });
+
+      return { ok: true, messageId: deletedMessageId };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to delete message.' };
+    }
+  }
+
   @SubscribeMessage('ping')
   handlePing(@MessageBody() payload: unknown) {
     return { event: 'pong', data: payload };

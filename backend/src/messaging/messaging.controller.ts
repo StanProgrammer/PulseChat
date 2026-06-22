@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedUser } from '../auth/types/auth.types';
 import { SearchUsersDto } from './dto/search-users.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { StartDirectConversationDto } from './dto/start-direct-conversation.dto';
+import { UpdateMessageDto } from './dto/update-message.dto';
 import { MessagingService } from './messaging.service';
 
 @Controller('messaging')
@@ -44,5 +45,24 @@ export class MessagingController {
   @Post('direct-conversations/:conversationId/messages')
   sendMessage(@CurrentUser() user: AuthenticatedUser, @Param('conversationId') conversationId: string, @Body() dto: SendMessageDto) {
     return this.messagingService.sendMessage(user.sub, conversationId, dto.content, dto.attachmentIds);
+  }
+
+  @Patch('direct-conversations/:conversationId/messages/:messageId')
+  updateMessage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('conversationId') _conversationId: string,
+    @Param('messageId') messageId: string,
+    @Body() dto: UpdateMessageDto
+  ) {
+    return this.messagingService.updateMessage(user.sub, messageId, dto.content || '');
+  }
+
+  @Delete('direct-conversations/:conversationId/messages/:messageId')
+  deleteMessage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('conversationId') _conversationId: string,
+    @Param('messageId') messageId: string
+  ) {
+    return this.messagingService.deleteMessage(user.sub, messageId);
   }
 }
