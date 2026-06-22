@@ -1827,6 +1827,186 @@ button:focus-visible {
   font-weight: 700;
 }
 
+/* ── @mention dropdown ── */
+
+.dm-composer-input-with-mentions {
+  position: relative;
+}
+
+.mention-dropdown {
+  min-width: 14rem;
+  max-width: 20rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  border: 1px solid #d9dee4;
+  border-radius: 0.7rem;
+  background: #ffffff;
+  box-shadow:
+    0 18px 40px rgb(23 25 28 / 0.2),
+    0 4px 12px rgb(23 25 28 / 0.08);
+  padding: 0.35rem;
+  pointer-events: auto;
+  animation: mention-in 120ms ease both;
+}
+
+.mention-dropdown-fixed {
+  position: fixed;
+  z-index: 100;
+  max-height: 18rem;
+  transform-origin: top left;
+}
+
+.mention-dropdown-fixed.mention-dropdown {
+  max-width: 22rem;
+  min-width: 16rem;
+}
+
+/* Visual connector triangle pointing toward the cursor */
+.mention-dropdown-connector {
+  position: absolute;
+  top: -5px;
+  left: 18px;
+  width: 10px;
+  height: 5px;
+  overflow: hidden;
+}
+
+.mention-dropdown-connector::after {
+  content: '';
+  display: block;
+  width: 10px;
+  height: 10px;
+  border: 1px solid #d9dee4;
+  background: #ffffff;
+  transform: rotate(45deg);
+  transform-origin: center;
+  border-radius: 0 0 2px 0;
+}
+
+/* When the dropdown is placed above the cursor, flip the connector to
+   point downward from the bottom edge of the dropdown. */
+.mention-dropdown-above .mention-dropdown-connector {
+  top: auto;
+  bottom: -5px;
+}
+
+.mention-dropdown-above .mention-dropdown-connector::after {
+  border-radius: 2px 0 0 0;
+}
+
+@keyframes mention-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.mention-dropdown-loading,
+.mention-dropdown-empty {
+  padding: 0.65rem 0.72rem;
+  color: #8a939d;
+  font-size: 0.84rem;
+  font-weight: 750;
+  text-align: center;
+}
+
+.mention-dropdown-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.6rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: #1d1c1d;
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 100ms ease;
+}
+
+.mention-dropdown-item:hover,
+.mention-dropdown-item-active {
+  background: #eef1f4;
+}
+
+.mention-dropdown-item .avatar {
+  width: 1.55rem;
+  height: 1.55rem;
+  flex-shrink: 0;
+  border-radius: 0.4rem;
+  font-size: 0.6rem;
+}
+
+.mention-dropdown-name {
+  overflow: hidden;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-dropdown-email {
+  overflow: hidden;
+  flex: 1;
+  color: #8a939d;
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Highlighted matching text in mention results ── */
+
+.mention-match {
+  color: #16708d;
+  font-weight: 900;
+}
+
+/* ── @mention styling in composer ── */
+
+.dm-composer-editor span[data-type="mention"] {
+  display: inline;
+  border-radius: 0.28rem;
+  background: rgb(54 197 240 / 0.14);
+  color: #16708d;
+  font-weight: 800;
+  padding: 0.06rem 0.2rem;
+  cursor: pointer;
+  unicode-bidi: -moz-plaintext;
+  unicode-bidi: plaintext;
+}
+
+.dm-composer-editor span[data-type="mention"]:hover {
+  background: rgb(54 197 240 / 0.22);
+}
+
+/* ── @mention styling in messages ── */
+
+.message-content span[data-type="mention"] {
+  display: inline;
+  border-radius: 0.28rem;
+  background: rgb(54 197 240 / 0.14);
+  color: #16708d;
+  font-weight: 800;
+  padding: 0.06rem 0.2rem;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.message-content span[data-type="mention"]:hover {
+  background: rgb(54 197 240 / 0.24);
+  color: #0f5a74;
+}
+
 .dm-composer-input {
   display: block;
   width: 100%;

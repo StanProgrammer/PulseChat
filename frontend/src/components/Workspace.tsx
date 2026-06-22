@@ -50,6 +50,13 @@ import {
   type RecentEmoji,
   type SelectedEmoji
 } from './workspace/recentEmojis';
+import {
+  detectMentionAtCursor,
+  insertMentionAtCursor,
+  type MentionMatch,
+  type MentionSelection
+} from './workspace/mentionUtils';
+import MentionDropdown from './workspace/MentionDropdown';
 
 type WorkspaceProps = {
   user: User;
@@ -355,6 +362,17 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
                     messages={messages}
                     participant={activeParticipant}
                     user={user}
+                    onMentionClick={(userId, userName) => {
+                      // Start a DM with the mentioned user
+                      const teammate: Teammate = {
+                        id: userId,
+                        name: userName,
+                        email: '',
+                        workspaceName: user.workspaceName,
+                        avatar: null
+                      };
+                      handleStartConversation(teammate);
+                    }}
                   />
                 </div>
               ) : (
@@ -369,6 +387,9 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
           {activeParticipant && (
             <div className="flex-shrink-0 px-3 pb-3 pt-2 sm:px-6">
               <MessageComposer
+                accessToken={accessToken}
+                currentUserId={user.id}
+                activeConversationId={activeConversation?.id}
                 draft={draftHtml}
                 draftText={draftText}
                 isSending={isSending}
@@ -394,11 +415,13 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
 function MessageStream({
   messages,
   participant,
-  user
+  user,
+  onMentionClick
 }: {
   messages: RealtimeMessage[];
   participant: Teammate;
   user: User;
+  onMentionClick?: (userId: string, userName: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isInitialLoad = useRef(true);
@@ -469,6 +492,22 @@ function MessageStream({
                   <div
                     className="message-content mt-0.5 text-[0.92rem] leading-6 text-[#343940]"
                     dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }}
+                    onClick={(event) => {
+                      // Click on mention span — open a DM with that user
+                      const target = event.target;
+                      if (
+                        target instanceof HTMLElement &&
+                        target.getAttribute('data-type') === 'mention'
+                      ) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const userId = target.getAttribute('data-user-id');
+                        const userName = target.getAttribute('data-user-name');
+                        if (userId && userName && onMentionClick) {
+                          onMentionClick(userId, userName);
+                        }
+                      }
+                    }}
                   />
                 )}
                 {message.attachments && message.attachments.length > 0 && (
@@ -610,6 +649,9 @@ function FilePreviewCard({ file, onRemove, onRetry }: { file: PendingFile; onRem
 /* ─── Message composer (editor, toolbar, popovers) ─── */
 
 function MessageComposer({
+  accessToken,
+  currentUserId,
+  activeConversationId,
   participant,
   draft,
   draftText,
@@ -622,6 +664,9 @@ function MessageComposer({
   onRetryFile,
   onSubmit
 }: {
+  accessToken: string;
+  currentUserId: string;
+  activeConversationId?: string;
   participant: Teammate;
   draft: string;
   draftText: string;
@@ -654,10 +699,60 @@ function MessageComposer({
   const [linkDraft, setLinkDraft] = useState({ text: '', url: '', error: '' });
   const [recentEmojis, setRecentEmojis] = useState<RecentEmoji[]>(() => loadRecentEmojis());
 
+  /* ── @mention state ── */
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionMatch, setMentionMatch] = useState<MentionMatch | null>(null);
+
   const syncEditorDraft = () => {
     const editor = editorRef.current;
     if (!editor) return;
     onDraftChange(sanitizeMessageHtml(editor.innerHTML), editor.textContent || '');
+  };
+
+  const closeMentionDropdown = useCallback(() => {
+    setMentionOpen(false);
+    setMentionMatch(null);
+    setMentionQuery('');
+  }, []);
+
+  const handleMentionSelect = useCallback((selection: MentionSelection) => {
+    const editor = editorRef.current;
+    const match = mentionMatchRef.current;
+    if (!editor || !match) return;
+
+    insertMentionAtCursor(editor, match, selection);
+    closeMentionDropdown();
+    syncEditorDraft();
+    // Update the saved selection to point after the newly inserted mention
+    saveEditorSelection();
+    editor.focus();
+  }, [closeMentionDropdown]);
+
+  // Keep a ref for the mention match to avoid stale closures
+  const mentionMatchRef = useRef<MentionMatch | null>(null);
+  mentionMatchRef.current = mentionMatch;
+
+  const handleEditorInput = () => {
+    const editor = editorRef.current;
+    if (!editor) {
+      closeMentionDropdown();
+      return;
+    }
+
+    // Check for @mention pattern at cursor
+    const match = detectMentionAtCursor(editor);
+
+    if (match) {
+      setMentionMatch(match);
+      mentionMatchRef.current = match;
+      setMentionQuery(match.query);
+      setMentionOpen(true);
+    } else {
+      closeMentionDropdown();
+    }
+
+    syncEditorDraft();
   };
 
   const saveEditorSelection = () => {
@@ -670,6 +765,12 @@ function MessageComposer({
   };
 
   const handleEditorKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // When mention dropdown is open, Enter/arrow/escape keys are handled by the dropdown
+    if (mentionOpen && (event.key === 'Enter' || event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Escape')) {
+      // These keys are handled by the MentionDropdown's global keydown listener
+      return;
+    }
+
     if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
 
     const editor = editorRef.current;
@@ -724,16 +825,21 @@ function MessageComposer({
     return () => document.removeEventListener('selectionchange', updateActiveMarks);
   }, []);
 
-  // Close popovers on outside click / Escape
+  // Close popovers on outside click / Escape / scroll
   useEffect(() => {
-    if (!isLinkPopoverOpen && !isEmojiPopoverOpen) return;
+    if (!isLinkPopoverOpen && !isEmojiPopoverOpen && !mentionOpen) return;
 
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
-      if (!(target instanceof Node) || composerRef.current?.contains(target)) return;
+      if (!(target instanceof Node)) return;
+      // Don't close if clicking inside the composer
+      if (composerRef.current?.contains(target)) return;
+      // Don't close if clicking inside the portaled mention dropdown
+      if (target instanceof Element && target.closest('.mention-dropdown')) return;
       setIsLinkPopoverOpen(false);
       setIsEmojiPopoverOpen(false);
       setLinkDraft({ text: '', url: '', error: '' });
+      closeMentionDropdown();
     };
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -741,16 +847,31 @@ function MessageComposer({
       setIsLinkPopoverOpen(false);
       setIsEmojiPopoverOpen(false);
       setLinkDraft({ text: '', url: '', error: '' });
+      closeMentionDropdown();
       editorRef.current?.focus();
+    };
+
+    // Close mention dropdown when the message stream scrolls
+    const handleScroll = () => {
+      if (mentionOpen) closeMentionDropdown();
     };
 
     document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
+    // Find the scrollable message area
+    const scrollEl = document.querySelector('.conversation-stream');
+    if (mentionOpen && scrollEl) {
+      scrollEl.addEventListener('scroll', handleScroll, { passive: true });
+    }
+
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
+      if (scrollEl) {
+        scrollEl.removeEventListener('scroll', handleScroll);
+      }
     };
-  }, [isEmojiPopoverOpen, isLinkPopoverOpen]);
+  }, [isEmojiPopoverOpen, isLinkPopoverOpen, mentionOpen, closeMentionDropdown]);
 
   /* ── Link popover ── */
 
@@ -966,7 +1087,7 @@ function MessageComposer({
         </div>
       )}
 
-      <div className="dm-composer-input">
+      <div className="dm-composer-input dm-composer-input-with-mentions">
         <div
           aria-label={`Message ${participant.name}`}
           className="dm-composer-editor"
@@ -974,7 +1095,7 @@ function MessageComposer({
           data-placeholder={`Message ${participant.name}`}
           onBlur={saveEditorSelection}
           onFocus={saveEditorSelection}
-          onInput={syncEditorDraft}
+          onInput={handleEditorInput}
           onKeyUp={saveEditorSelection}
           onMouseUp={saveEditorSelection}
           onKeyDown={handleEditorKeyDown}
@@ -983,6 +1104,18 @@ function MessageComposer({
           role="textbox"
           suppressContentEditableWarning
         />
+
+        {/* Mention dropdown — rendered as a portal near the cursor */}
+        {mentionOpen && mentionMatch && (
+          <MentionDropdown
+            accessToken={accessToken}
+            query={mentionQuery}
+            excludeUserIds={[currentUserId]}
+            onSelect={handleMentionSelect}
+            onClose={closeMentionDropdown}
+            editorElement={editorRef.current}
+          />
+        )}
       </div>
 
       {/* Pending file previews */}

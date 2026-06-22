@@ -71,7 +71,7 @@ export function formatMessagePreview(content: string) {
 export function sanitizeMessageHtml(content: string) {
   const sanitized = DOMPurify.sanitize(content, {
     ALLOWED_TAGS: MESSAGE_HTML_TAGS,
-    ALLOWED_ATTR: ['href', 'target', 'rel', 'data-type', 'data-id', 'class'],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'data-type', 'data-id', 'data-user-id', 'data-user-name', 'data-channel-id', 'contenteditable', 'class'],
     ALLOW_DATA_ATTR: true
   });
   const element = document.createElement('div');

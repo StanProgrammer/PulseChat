@@ -17,6 +17,15 @@ export class MessagingController {
     return this.messagingService.searchUsers(user.sub, query.query);
   }
 
+  @Get('users/mention-search')
+  searchMentionableUsers(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('query') query?: string,
+    @Query('conversationId') conversationId?: string
+  ) {
+    return this.messagingService.searchMentionableUsers(user.sub, query || '', conversationId);
+  }
+
   @Get('direct-conversations')
   listDirectConversations(@CurrentUser() user: AuthenticatedUser) {
     return this.messagingService.listDirectConversations(user.sub);

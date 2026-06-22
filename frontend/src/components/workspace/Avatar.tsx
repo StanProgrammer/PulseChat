@@ -2,13 +2,13 @@ import { memo } from 'react';
 
 type AvatarProps = {
   initials: string;
-  size?: 'sm' | 'md';
+  size?: 'xs' | 'sm' | 'md';
   tone?: 'default' | 'light';
   status?: 'online' | 'away' | 'offline' | 'focus';
 };
 
 function Avatar({ initials, size = 'md', tone = 'default', status }: AvatarProps) {
-  const sizeClass = size === 'sm' ? 'h-8 w-8 text-xs' : 'h-10 w-10 text-sm';
+  const sizeClass = size === 'xs' ? 'h-6 w-6 text-[0.55rem]' : size === 'sm' ? 'h-8 w-8 text-xs' : 'h-10 w-10 text-sm';
   const toneClass = tone === 'light' ? 'bg-white text-[#18242d]' : 'avatar-gradient text-white';
 
   return (

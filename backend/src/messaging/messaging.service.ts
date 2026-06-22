@@ -52,7 +52,18 @@ export class MessagingService {
     const trimmedQuery = query.trim();
 
     if (!trimmedQuery) {
-      return { users: [] };
+      // Return all workspace users (excluding self)
+      const users = await this.prisma.user.findMany({
+        where: {
+          id: { not: currentUser.id },
+          workspaceName: currentUser.workspaceName
+        },
+        select: userSummarySelect,
+        orderBy: [{ name: 'asc' }, { createdAt: 'asc' }],
+        take: 12
+      });
+
+      return { users };
     }
 
     const users = await this.prisma.user.findMany({
@@ -61,6 +72,40 @@ export class MessagingService {
         workspaceName: currentUser.workspaceName,
         name: { contains: trimmedQuery, mode: 'insensitive' }
       },
+      select: userSummarySelect,
+      orderBy: [{ name: 'asc' }, { createdAt: 'asc' }],
+      take: 12
+    });
+
+    return { users };
+  }
+
+  /**
+   * Search workspace users for @mentions, optionally scoped to a conversation's members.
+   */
+  async searchMentionableUsers(currentUserId: string, query: string, conversationId?: string) {
+    const currentUser = await this.getCurrentUser(currentUserId);
+    const trimmedQuery = query.trim();
+
+    // Base where: same workspace, exclude self
+    const baseWhere: Prisma.UserWhereInput = {
+      id: { not: currentUser.id },
+      workspaceName: currentUser.workspaceName
+    };
+
+    // If scoped to a conversation, only include members of that conversation
+    if (conversationId) {
+      const memberIds = await this.getConversationMemberIds(currentUserId, conversationId);
+      baseWhere.id = { not: currentUser.id, in: memberIds };
+    }
+
+    // Add name filter if there's a query
+    if (trimmedQuery) {
+      baseWhere.name = { contains: trimmedQuery, mode: 'insensitive' };
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: baseWhere,
       select: userSummarySelect,
       orderBy: [{ name: 'asc' }, { createdAt: 'asc' }],
       take: 12
