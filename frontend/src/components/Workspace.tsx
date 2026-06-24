@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   ChangeEvent,
   ClipboardEvent,
@@ -461,6 +462,8 @@ function MessageStream({
     bold: false, italic: false, underline: false, strikeThrough: false
   });
   const editEditorInitializedRef = useRef(false);
+  const [kebabMenuPosition, setKebabMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const kebabMenuAlignRef = useRef<'left' | 'right'>('right');
 
   const scrollToBottom = useCallback((smooth: boolean) => {
     const el = scrollRef.current;
@@ -549,7 +552,7 @@ function MessageStream({
     return () => document.removeEventListener('selectionchange', updateMarks);
   }, [editingMessageId]);
 
-  // Close kebab menu on outside click
+  // Close kebab menu on outside click and scroll
   useEffect(() => {
     if (!openMenuMessageId) return;
     const handleClick = (event: MouseEvent) => {
@@ -557,9 +560,27 @@ function MessageStream({
       if (target instanceof Element && target.closest('.message-kebab-menu')) return;
       if (target instanceof Element && target.closest('.message-kebab-trigger')) return;
       setOpenMenuMessageId(null);
+      setKebabMenuPosition(null);
     };
     document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+
+    // Close kebab menu when the conversation stream scrolls so the
+    // fixed-position menu doesn't visually detach from its message.
+    const scrollEl = document.querySelector('.conversation-stream');
+    const handleScroll = () => {
+      setOpenMenuMessageId(null);
+      setKebabMenuPosition(null);
+    };
+    if (scrollEl) {
+      scrollEl.addEventListener('scroll', handleScroll, { passive: true });
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      if (scrollEl) {
+        scrollEl.removeEventListener('scroll', handleScroll);
+      }
+    };
   }, [openMenuMessageId]);
 
   // Close delete confirm on Escape
@@ -577,6 +598,7 @@ function MessageStream({
     setEditInitialContent(prepared);
     setEditingMessageId(message.id);
     setOpenMenuMessageId(null);
+    setKebabMenuPosition(null);
   };
 
 
@@ -683,6 +705,7 @@ function MessageStream({
   const confirmDelete = (messageId: string) => {
     setDeleteConfirmId(messageId);
     setOpenMenuMessageId(null);
+    setKebabMenuPosition(null);
   };
 
   const executeDelete = () => {
@@ -754,7 +777,7 @@ function MessageStream({
 
           return (
             <article
-              className={`message-card ${isOwn ? 'message-card-own' : ''} ${isEditing ? 'message-card-editing' : ''}`}
+              className={`message-card ${isOwn ? 'message-card-own' : ''} ${isEditing ? 'message-card-editing' : ''} ${menuOpen ? 'message-card-menu-open' : ''}`}
               key={message.id}
               style={{ animationDelay: `${index * 55}ms` }}
             >
@@ -881,7 +904,25 @@ function MessageStream({
                     className={`message-kebab-trigger ${menuOpen ? 'message-kebab-trigger-open' : ''}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setOpenMenuMessageId(menuOpen ? null : message.id);
+                      if (menuOpen) {
+                        setOpenMenuMessageId(null);
+                        setKebabMenuPosition(null);
+                      } else {
+                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                        const menuWidth = 152; // ~9.5rem
+                        let left = rect.right - menuWidth;
+                        let align: 'left' | 'right' = 'right';
+                        if (left < 8) {
+                          left = rect.left;
+                          align = 'left';
+                        }
+                        if (left + menuWidth > window.innerWidth - 8) {
+                          left = window.innerWidth - menuWidth - 8;
+                        }
+                        kebabMenuAlignRef.current = align;
+                        setKebabMenuPosition({ left: Math.max(8, left), top: rect.bottom + 4 });
+                        setOpenMenuMessageId(message.id);
+                      }
                     }}
                     type="button"
                   >
@@ -891,30 +932,6 @@ function MessageStream({
                       <circle cx="8" cy="13" r="1.5" />
                     </svg>
                   </button>
-                  {menuOpen && (
-                    <div className="message-kebab-menu">
-                      <button
-                        className="message-kebab-item"
-                        onClick={() => startEditing(message)}
-                        type="button"
-                      >
-                        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M11 2l3 3-9 9H2v-3z" />
-                        </svg>
-                        Edit message
-                      </button>
-                      <button
-                        className="message-kebab-item message-kebab-item-danger"
-                        onClick={() => confirmDelete(message.id)}
-                        type="button"
-                      >
-                        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M2 4h12m-2 0l-.7 8.4a2 2 0 01-2 1.6H6.7a2 2 0 01-2-1.6L4 4m2 0V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5V4" />
-                        </svg>
-                        Delete message
-                      </button>
-                    </div>
-                  )}
                 </div>
               )}
             </article>
@@ -926,6 +943,45 @@ function MessageStream({
           <span>Send the first note to start the conversation.</span>
         </div>
       )}
+
+      {/* Portaled kebab menu — rendered at document body level to avoid clipping */}
+      {openMenuMessageId && kebabMenuPosition && (() => {
+        const message = messages.find((m) => m.id === openMenuMessageId);
+        if (!message) return null;
+        return createPortal(
+          <div
+            className={`message-kebab-menu ${kebabMenuAlignRef.current === 'left' ? 'message-kebab-menu-left' : ''}`}
+            style={{
+              position: 'fixed',
+              left: kebabMenuPosition.left,
+              top: kebabMenuPosition.top,
+              zIndex: 100
+            }}
+          >
+            <button
+              className="message-kebab-item"
+              onClick={() => startEditing(message)}
+              type="button"
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 2l3 3-9 9H2v-3z" />
+              </svg>
+              Edit message
+            </button>
+            <button
+              className="message-kebab-item message-kebab-item-danger"
+              onClick={() => confirmDelete(message.id)}
+              type="button"
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 4h12m-2 0l-.7 8.4a2 2 0 01-2 1.6H6.7a2 2 0 01-2-1.6L4 4m2 0V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5V4" />
+              </svg>
+              Delete message
+            </button>
+          </div>,
+          document.body
+        );
+      })()}
     </div>
   );
 }

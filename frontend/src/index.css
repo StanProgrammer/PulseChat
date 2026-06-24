@@ -2700,7 +2700,6 @@ button:focus-visible {
 /* ── Kebab menu (three-dot actions) ── */
 
 .message-kebab-wrapper {
-  position: relative;
   flex-shrink: 0;
   margin-left: 0.25rem;
   align-self: flex-start;
@@ -2736,11 +2735,19 @@ button:focus-visible {
   color: #343940;
 }
 
+/* Lock message card hover appearance while the kebab menu is open,
+   so moving the cursor from the trigger to the menu doesn't
+   un-highlight the card (the menu is portaled to body, so the
+   card's :hover would otherwise stop matching). */
+.message-card-menu-open {
+  background: #f7f8fa;
+}
+
+.message-card-own.message-card-menu-open {
+  background: #f6faf8;
+}
+
 .message-kebab-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 30;
   min-width: 9rem;
   border: 1px solid #d9dee4;
   border-radius: 0.6rem;
@@ -2751,6 +2758,12 @@ button:focus-visible {
   padding: 0.25rem;
   animation: kebab-in 100ms ease both;
   transform-origin: top right;
+}
+
+/* When the menu is aligned to the card's left edge (near screen right edge),
+   adjust the transform origin so the animation expands toward the trigger. */
+.message-kebab-menu-left {
+  transform-origin: top left;
 }
 
 @keyframes kebab-in {
