@@ -59,6 +59,7 @@ import {
   type MentionSelection
 } from './workspace/mentionUtils';
 import MentionDropdown from './workspace/MentionDropdown';
+import ThreadPanel from './workspace/ThreadPanel';
 
 type WorkspaceProps = {
   user: User;
@@ -127,6 +128,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     sendMessage,
     setActiveConversationId,
     setQuery,
+    socketRef,
     socketStatus,
     startConversation,
     updateMessage,
@@ -138,6 +140,101 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [threadMessage, setThreadMessage] = useState<RealtimeMessage | null>(null);
+  // Track thread reply counts per message (keyed by message ID)
+  const [threadReplyCounts, setThreadReplyCounts] = useState<Record<string, number>>({});
+  // Track unread thread replies per message
+  const [threadUnreadCounts, setThreadUnreadCounts] = useState<Record<string, number>>({});
+
+  // Load thread reply counts and unread counts on conversation mount
+  useEffect(() => {
+    if (!accessToken) return;
+    const convId = activeConversation?.id;
+    if (!convId) return;
+
+    void import('../api/messaging').then(({ getThreadReplyCountsForConversation, getUnreadThreadReplies }) => {
+      // Load actual reply counts from backend
+      getThreadReplyCountsForConversation(accessToken, convId)
+        .then((res: { replyCounts: Record<string, number> }) => setThreadReplyCounts(res.replyCounts))
+        .catch(() => {});
+
+      // Load unread counts
+      getUnreadThreadReplies(accessToken, convId)
+        .then((res: { unreadCounts: Record<string, number> }) => setThreadUnreadCounts(res.unreadCounts))
+        .catch(() => {});
+    });
+  }, [accessToken, activeConversation?.id]);
+
+  // Listen for unread thread updates via socket
+  useEffect(() => {
+    if (!socketRef.current) return;
+    const socket = socketRef.current;
+
+    const handleUnreadUpdated = (payload: { unreadCounts: Record<string, number> }) => {
+      setThreadUnreadCounts(payload.unreadCounts);
+    };
+
+    socket.on('thread:unread:updated', handleUnreadUpdated);
+    return () => {
+      socket.off('thread:unread:updated', handleUnreadUpdated);
+    };
+  }, [socketRef]);
+
+  // Listen for new thread replies to update reply counts
+  useEffect(() => {
+    if (!socketRef.current) return;
+    const socket = socketRef.current;
+
+    const handleNewThreadReply = (payload: { reply: import('../api/messaging').ThreadReply; replyCount: number }) => {
+      setThreadReplyCounts((current) => ({
+        ...current,
+        [payload.reply.messageId]: payload.replyCount
+      }));
+    };
+
+    socket.on('thread:reply:new', handleNewThreadReply);
+    return () => {
+      socket.off('thread:reply:new', handleNewThreadReply);
+    };
+  }, [socketRef]);
+
+  // Listen for thread reply deletions to update reply counts
+  useEffect(() => {
+    if (!socketRef.current) return;
+    const socket = socketRef.current;
+
+    const handleThreadReplyDeleted = (payload: { replyId: string; messageId: string; replyCount: number }) => {
+      setThreadReplyCounts((current) => ({
+        ...current,
+        [payload.messageId]: payload.replyCount
+      }));
+    };
+
+    socket.on('thread:reply:deleted', handleThreadReplyDeleted);
+    return () => {
+      socket.off('thread:reply:deleted', handleThreadReplyDeleted);
+    };
+  }, [socketRef]);
+
+  // Function to update reply count from ThreadPanel
+  const handleReplyCountChange = useCallback((messageId: string, newCount: number) => {
+    setThreadReplyCounts((current) => ({
+      ...current,
+      [messageId]: newCount
+    }));
+  }, []);
+
+  // Function to update unread count from ThreadPanel
+  const handleUnreadCountChange = useCallback((messageId: string, unreadCount: number) => {
+    setThreadUnreadCounts((current) => {
+      if (unreadCount === 0) {
+        const next = { ...current };
+        delete next[messageId];
+        return next;
+      }
+      return { ...current, [messageId]: unreadCount };
+    });
+  }, []);
 
   // Auto-close sidebar when resizing from desktop to tablet/mobile
   useEffect(() => {
@@ -287,7 +384,18 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     sendMessage(event, { attachmentIds, pendingAttachments });
   }, [activeConversation, draftHtml, draftText, pendingFiles, sendMessage, socketStatus, user, accessToken]);
 
+  // Close thread when switching conversations
+  useEffect(() => {
+    setThreadMessage(null);
+  }, [activeConversation?.id]);
 
+  const handleOpenThread = useCallback((message: RealtimeMessage) => {
+    setThreadMessage(message);
+  }, []);
+
+  const handleCloseThread = useCallback(() => {
+    setThreadMessage(null);
+  }, []);
 
   return (
     <main className="workspace-shell min-h-dvh overflow-x-hidden bg-[#eef1f4] text-[#17191c]">
@@ -300,7 +408,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
         />
       )}
 
-      <div className="grid min-h-dvh grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <div className={`grid min-h-dvh ${threadMessage ? 'lg:grid-cols-[320px_minmax(0,1fr)_380px] xl:grid-cols-[320px_minmax(0,1fr)_420px]' : 'lg:grid-cols-[320px_minmax(0,1fr)]'}`}>
         <WorkspaceSidebar
           activeConversationId={activeConversation?.id}
           conversations={conversations}
@@ -368,6 +476,10 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
                     user={user}
                     accessToken={accessToken}
                     conversationId={activeConversation?.id}
+                    threadMessageId={threadMessage?.id ?? null}
+                    threadReplyCounts={threadReplyCounts}
+                    threadUnreadCounts={threadUnreadCounts}
+                    onOpenThread={handleOpenThread}
                     onUpdateMessage={updateMessage}
                     onDeleteMessage={deleteMessage}
                     onMentionClick={(userId, userName) => {
@@ -413,6 +525,22 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
             </div>
           )}
         </section>
+
+        {/* ── Thread panel (when a thread is open) ── */}
+        {threadMessage && (
+          <ThreadPanel
+            accessToken={accessToken}
+            currentUserId={user.id}
+            onClose={handleCloseThread}
+            parentMessage={threadMessage}
+            replyCount={threadReplyCounts[threadMessage.id] || 0}
+            socket={socketRef.current}
+            socketStatus={socketStatus}
+            user={user}
+            onReplyCountChange={handleReplyCountChange}
+            onUnreadCountChange={handleUnreadCountChange}
+          />
+        )}
       </div>
     </main>
   );
@@ -433,6 +561,10 @@ function MessageStream({
   user,
   accessToken,
   conversationId,
+  threadMessageId,
+  threadReplyCounts,
+  threadUnreadCounts,
+  onOpenThread,
   onUpdateMessage,
   onDeleteMessage,
   onMentionClick
@@ -442,6 +574,10 @@ function MessageStream({
   user: User;
   accessToken: string;
   conversationId?: string;
+  threadMessageId: string | null;
+  threadReplyCounts: Record<string, number>;
+  threadUnreadCounts: Record<string, number>;
+  onOpenThread: (message: RealtimeMessage) => void;
   onUpdateMessage: (messageId: string, content: string, conversationId: string) => void;
   onDeleteMessage: (messageId: string, conversationId: string) => void;
   onMentionClick?: (userId: string, userName: string) => void;
@@ -783,17 +919,19 @@ function MessageStream({
             >
               <Avatar initials={getInitials(message.sender.name)} status={isOwn ? 'online' : undefined} />
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                  <h3 className="text-sm font-black leading-5">{isOwn ? 'You' : message.sender.name}</h3>
-                  <span className="text-xs font-bold text-[#8a939d]">
-                    {formatMessageTime(message.createdAt)}
-                    {edited && <span className="edited-label"> (edited)</span>}
-                  </span>
-                  {message.status && message.status !== 'sent' && (
-                    <span className={`message-status message-status-${message.status}`}>
-                      {message.status}
+                <div className="flex items-start gap-1">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                    <h3 className="text-sm font-black leading-5">{isOwn ? 'You' : message.sender.name}</h3>
+                    <span className="text-xs font-bold text-[#8a939d]">
+                      {formatMessageTime(message.createdAt)}
+                      {edited && <span className="edited-label"> (edited)</span>}
                     </span>
-                  )}
+                    {message.status && message.status !== 'sent' && (
+                      <span className={`message-status message-status-${message.status}`}>
+                        {message.status}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {isEditing ? (
@@ -892,13 +1030,53 @@ function MessageStream({
                         ))}
                       </div>
                     )}
+
+                    {/* Thread reply count indicator — prominent, always visible below message */}
+                    {threadReplyCounts[message.id] > 0 && (
+                      <button
+                        className={`message-thread-reply-count ${threadUnreadCounts[message.id] > 0 ? 'message-thread-reply-unread' : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenThread(message);
+                        }}
+                        type="button"
+                      >
+                        <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor" className="message-thread-reply-icon">
+                          <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v8a1 1 0 01-1 1h-5l-3 3v-3H4a1 1 0 01-1-1V4z" fill="currentColor" opacity="0.65" />
+                        </svg>
+                        <span className="message-thread-reply-count-text">{threadReplyCounts[message.id]} {threadReplyCounts[message.id] === 1 ? 'reply' : 'replies'}</span>
+                        {threadUnreadCounts[message.id] > 0 && (
+                          <span className="thread-unread-badge">{threadUnreadCounts[message.id]}</span>
+                        )}
+                      </button>
+                    )}
                   </>
                 )}
               </div>
 
-              {/* Kebab menu for own messages (not while editing) */}
-              {isOwn && !isEditing && (
-                <div className="message-kebab-wrapper">
+              {/* Message actions (thread + kebab), visible on hover */}
+              <div className="message-actions-group">
+                {/* Reply in thread button — appears on hover for all messages */}
+                {!isEditing && (
+                  <button
+                    aria-label="Reply in thread"
+                    className={`message-thread-trigger ${threadMessageId === message.id ? 'message-thread-trigger-active' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenThread(message);
+                    }}
+                    title="Reply in thread"
+                    type="button"
+                  >
+                    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v8a1 1 0 01-1 1h-5l-3 3v-3H4a1 1 0 01-1-1V4z" />
+                    </svg>
+                    <span className="message-thread-label">Reply</span>
+                  </button>
+                )}
+
+                {/* Kebab menu for own messages (not while editing) */}
+                {isOwn && !isEditing && (
                   <button
                     aria-label="Message actions"
                     className={`message-kebab-trigger ${menuOpen ? 'message-kebab-trigger-open' : ''}`}
@@ -932,8 +1110,8 @@ function MessageStream({
                       <circle cx="8" cy="13" r="1.5" />
                     </svg>
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </article>
           );
         })

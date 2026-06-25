@@ -1,10 +1,11 @@
-import type { AttachmentInfo, DirectConversation, DirectMessage } from '../../api/messaging';
+import type { AttachmentInfo, DirectConversation, DirectMessage, ThreadReply } from '../../api/messaging';
 
 export type SocketStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 export type RealtimeMessage = DirectMessage & {
   clientMessageId?: string;
   status?: 'sending' | 'sent' | 'failed';
+  threadReplyCount?: number;
 };
 
 export type PendingFile = {
@@ -29,6 +30,9 @@ export type ServerToClientEvents = {
   'message:updated': (payload: { conversationId: string; message: DirectMessage }) => void;
   'message:deleted': (payload: { conversationId: string; messageId: string }) => void;
   'conversation:updated': (payload: { conversation: DirectConversation }) => void;
+  'thread:reply:new': (payload: { reply: ThreadReply; replyCount: number }) => void;
+  'thread:reply:deleted': (payload: { replyId: string; messageId: string; replyCount: number }) => void;
+  'thread:unread:updated': (payload: { unreadCounts: Record<string, number> }) => void;
 };
 
 export type ClientToServerEvents = {
@@ -45,5 +49,17 @@ export type ClientToServerEvents = {
   'message:delete': (
     payload: { messageId: string },
     callback?: (response: SocketAck & { messageId?: string }) => void
+  ) => void;
+  'thread:reply': (
+    payload: { messageId: string; content: string; conversationId?: string },
+    callback?: (response: SocketAck & { replyId?: string }) => void
+  ) => void;
+  'thread:reply:delete': (
+    payload: { replyId: string },
+    callback?: (response: SocketAck) => void
+  ) => void;
+  'thread:mark-read': (
+    payload: { messageId: string },
+    callback?: (response: SocketAck) => void
   ) => void;
 };

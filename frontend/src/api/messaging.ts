@@ -44,6 +44,17 @@ export type DirectMessage = {
   sender: Teammate;
   attachments: AttachmentInfo[];
   conversationId?: string;
+  threadReplyCount?: number;
+};
+
+export type ThreadReply = {
+  id: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  sender: Teammate;
+  messageId: string;
+  conversationId: string;
 };
 
 export function searchWorkspaceUsers(accessToken: string, query: string) {
@@ -168,4 +179,40 @@ export function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/* ── Thread replies ── */
+
+export function listThreadReplies(accessToken: string, messageId: string) {
+  return apiRequest<{ replies: ThreadReply[] }>(`/messaging/messages/${messageId}/thread-replies`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export function sendThreadReplyApi(accessToken: string, messageId: string, content: string) {
+  return apiRequest<{ reply: ThreadReply }>(`/messaging/messages/${messageId}/thread-replies`, {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ content })
+  });
+}
+
+export function getUnreadThreadReplies(accessToken: string, conversationId?: string) {
+  const params = conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : '';
+  return apiRequest<{ unreadCounts: Record<string, number> }>(`/messaging/thread-replies/unread${params}`, {
+    headers: authHeaders(accessToken)
+  });
+}
+
+export function markThreadReadApi(accessToken: string, messageId: string) {
+  return apiRequest<{ ok: boolean }>(`/messaging/messages/${messageId}/thread-replies/read`, {
+    method: 'POST',
+    headers: authHeaders(accessToken)
+  });
+}
+
+export function getThreadReplyCountsForConversation(accessToken: string, conversationId: string) {
+  return apiRequest<{ replyCounts: Record<string, number> }>(`/messaging/thread-reply-counts/${conversationId}`, {
+    headers: authHeaders(accessToken)
+  });
 }

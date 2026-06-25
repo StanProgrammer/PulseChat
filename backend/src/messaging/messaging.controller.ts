@@ -6,6 +6,7 @@ import { SearchUsersDto } from './dto/search-users.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { StartDirectConversationDto } from './dto/start-direct-conversation.dto';
 import { UpdateMessageDto } from './dto/update-message.dto';
+import { SendThreadReplyDto } from './dto/send-thread-reply.dto';
 import { MessagingService } from './messaging.service';
 
 @Controller('messaging')
@@ -64,5 +65,56 @@ export class MessagingController {
     @Param('messageId') messageId: string
   ) {
     return this.messagingService.deleteMessage(user.sub, messageId);
+  }
+
+  /* ── Thread replies ── */
+
+  @Get('messages/:messageId/thread-replies')
+  listThreadReplies(@CurrentUser() user: AuthenticatedUser, @Param('messageId') messageId: string) {
+    return this.messagingService.listThreadReplies(user.sub, messageId);
+  }
+
+  @Delete('messages/:messageId/thread-replies/:replyId')
+  deleteThreadReply(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('messageId') _messageId: string,
+    @Param('replyId') replyId: string
+  ) {
+    return this.messagingService.deleteThreadReply(user.sub, replyId);
+  }
+
+  @Post('messages/:messageId/thread-replies')
+  sendThreadReply(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('messageId') messageId: string,
+    @Body() dto: SendThreadReplyDto
+  ) {
+    return this.messagingService.sendThreadReply(user.sub, messageId, dto.content);
+  }
+
+  @Get('thread-replies/unread')
+  getUnreadThreadReplies(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('conversationId') conversationId?: string
+  ) {
+    return this.messagingService.getUnreadThreadReplies(user.sub, conversationId);
+  }
+
+  @Post('messages/:messageId/thread-replies/read')
+  markThreadRead(@CurrentUser() user: AuthenticatedUser, @Param('messageId') messageId: string) {
+    return this.messagingService.markThreadRead(user.sub, messageId);
+  }
+
+  @Get('messages/:messageId/thread-reply-count')
+  getThreadReplyCount(@Param('messageId') messageId: string) {
+    return this.messagingService.getThreadReplyCount(messageId);
+  }
+
+  @Get('thread-reply-counts/:conversationId')
+  getThreadReplyCounts(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('conversationId') conversationId: string
+  ) {
+    return this.messagingService.getThreadReplyCountsForConversation(user.sub, conversationId);
   }
 }

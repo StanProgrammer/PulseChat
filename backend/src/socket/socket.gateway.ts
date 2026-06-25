@@ -175,6 +175,82 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  /* ── Thread reply socket events ── */
+
+  @SubscribeMessage('thread:reply')
+  async sendThreadReply(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() payload: { messageId?: string; content?: string; conversationId?: string }) {
+    const user = this.requireSocketUser(client);
+    const messageId = payload?.messageId;
+    const content = payload?.content || '';
+
+    if (!messageId || !content.trim()) {
+      return { ok: false, message: 'Message id and content are required.' };
+    }
+
+    try {
+      const { reply } = await this.messagingService.sendThreadReply(user.sub, messageId, content);
+
+      // Get reply count for the message
+      const { count } = await this.messagingService.getThreadReplyCount(messageId);
+
+      // Notify all members in the conversation room about the new reply
+      this.server.to(this.conversationRoom(reply.conversationId)).emit('thread:reply:new', {
+        reply,
+        replyCount: count
+      });
+
+      return { ok: true, replyId: reply.id };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to send reply.' };
+    }
+  }
+
+  @SubscribeMessage('thread:reply:delete')
+  async deleteThreadReply(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() payload: { replyId?: string }) {
+    const user = this.requireSocketUser(client);
+    const replyId = payload?.replyId;
+
+    if (!replyId) {
+      return { ok: false, message: 'Reply id is required.' };
+    }
+
+    try {
+      const result = await this.messagingService.deleteThreadReply(user.sub, replyId);
+
+      this.server.to(this.conversationRoom(result.conversationId)).emit('thread:reply:deleted', {
+        replyId: result.deletedReplyId,
+        messageId: result.messageId,
+        replyCount: result.replyCount
+      });
+
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to delete reply.' };
+    }
+  }
+
+  @SubscribeMessage('thread:mark-read')
+  async markThreadRead(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() payload: { messageId?: string }) {
+    const user = this.requireSocketUser(client);
+    const messageId = payload?.messageId;
+
+    if (!messageId) {
+      return { ok: false, message: 'Message id is required.' };
+    }
+
+    try {
+      await this.messagingService.markThreadRead(user.sub, messageId);
+
+      // Broadcast updated unread counts to the user
+      const { unreadCounts } = await this.messagingService.getUnreadThreadReplies(user.sub);
+      this.server.to(this.userRoom(user.sub)).emit('thread:unread:updated', { unreadCounts });
+
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to mark thread as read.' };
+    }
+  }
+
   @SubscribeMessage('ping')
   handlePing(@MessageBody() payload: unknown) {
     return { event: 'pong', data: payload };

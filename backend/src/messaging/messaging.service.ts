@@ -326,6 +326,249 @@ export class MessagingService {
     return members.map((member) => member.userId);
   }
 
+  /* ── Thread replies ── */
+
+  async sendThreadReply(currentUserId: string, messageId: string, content: string) {
+    const trimmedContent = content.trim();
+    const plainContent = trimmedContent.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+
+    if (!plainContent) {
+      throw new BadRequestException('Reply cannot be empty.');
+    }
+
+    if (trimmedContent.length > 4000) {
+      throw new BadRequestException('Reply is too long.');
+    }
+
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { id: true, conversationId: true, senderId: true }
+    });
+
+    if (!message) {
+      throw new NotFoundException('Message could not be found.');
+    }
+
+    await this.ensureConversationMember(currentUserId, message.conversationId);
+
+    const reply = await this.prisma.threadReply.create({
+      data: {
+        messageId,
+        senderId: currentUserId,
+        conversationId: message.conversationId,
+        content: trimmedContent
+      },
+      include: {
+        sender: { select: userSummarySelect }
+      }
+    });
+
+    // Update conversation timestamp
+    await this.prisma.conversation.update({
+      where: { id: message.conversationId },
+      data: { updatedAt: new Date() }
+    });
+
+    // Auto-mark as read by the sender
+    await this.prisma.threadReplyRead.upsert({
+      where: {
+        userId_messageId: {
+          userId: currentUserId,
+          messageId
+        }
+      },
+      update: { lastReadAt: new Date() },
+      create: {
+        userId: currentUserId,
+        messageId,
+        lastReadAt: new Date()
+      }
+    });
+
+    return {
+      reply: {
+        id: reply.id,
+        content: reply.content,
+        createdAt: reply.createdAt,
+        updatedAt: reply.updatedAt,
+        sender: reply.sender,
+        messageId: reply.messageId,
+        conversationId: reply.conversationId
+      }
+    };
+  }
+
+  async listThreadReplies(currentUserId: string, messageId: string) {
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { id: true, conversationId: true }
+    });
+
+    if (!message) {
+      throw new NotFoundException('Message could not be found.');
+    }
+
+    await this.ensureConversationMember(currentUserId, message.conversationId);
+
+    const replies = await this.prisma.threadReply.findMany({
+      where: { messageId },
+      include: {
+        sender: { select: userSummarySelect }
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 80
+    });
+
+    return {
+      replies: replies.map((reply) => ({
+        id: reply.id,
+        content: reply.content,
+        createdAt: reply.createdAt,
+        updatedAt: reply.updatedAt,
+        sender: reply.sender,
+        messageId: reply.messageId,
+        conversationId: reply.conversationId
+      }))
+    };
+  }
+
+  async getThreadReplyCount(messageId: string) {
+    const count = await this.prisma.threadReply.count({
+      where: { messageId }
+    });
+
+    return { count };
+  }
+
+  async getThreadReplyCountsForConversation(currentUserId: string, conversationId: string) {
+    await this.ensureConversationMember(currentUserId, conversationId);
+
+    // Get all messages in this conversation
+    const messages = await this.prisma.message.findMany({
+      where: { conversationId },
+      select: { id: true }
+    });
+
+    const messageIds = messages.map((m) => m.id);
+
+    if (messageIds.length === 0) {
+      return { replyCounts: {} };
+    }
+
+    // Get reply counts grouped by message
+    const groups = await this.prisma.threadReply.groupBy({
+      by: ['messageId'],
+      where: {
+        messageId: { in: messageIds }
+      },
+      _count: { id: true }
+    });
+
+    const replyCounts: Record<string, number> = {};
+    for (const group of groups) {
+      replyCounts[group.messageId] = group._count.id;
+    }
+
+    return { replyCounts };
+  }
+
+  async deleteThreadReply(currentUserId: string, replyId: string) {
+    const reply = await this.prisma.threadReply.findUnique({
+      where: { id: replyId },
+      select: { id: true, senderId: true, messageId: true, conversationId: true }
+    });
+
+    if (!reply) {
+      throw new NotFoundException('Thread reply could not be found.');
+    }
+
+    if (reply.senderId !== currentUserId) {
+      throw new ForbiddenException('You can only delete your own replies.');
+    }
+
+    await this.prisma.threadReply.delete({ where: { id: replyId } });
+
+    // Get updated count
+    const { count } = await this.getThreadReplyCount(reply.messageId);
+
+    return {
+      deletedReplyId: replyId,
+      messageId: reply.messageId,
+      conversationId: reply.conversationId,
+      replyCount: count
+    };
+  }
+
+  async getUnreadThreadReplies(currentUserId: string, conversationId?: string) {
+    // Get all messages with their latest thread reply time and user's last read time
+    const where: Prisma.ThreadReplyWhereInput = {};
+
+    if (conversationId) {
+      await this.ensureConversationMember(currentUserId, conversationId);
+      where.conversationId = conversationId;
+    }
+
+    // Get all read records for this user
+    const reads = await this.prisma.threadReplyRead.findMany({
+      where: { userId: currentUserId },
+      select: { messageId: true, lastReadAt: true }
+    });
+
+    const readMap = new Map(reads.map((r) => [r.messageId, r.lastReadAt]));
+
+    // Get all thread replies grouped by message, finding the latest per message
+    const replies = await this.prisma.threadReply.groupBy({
+      by: ['messageId'],
+      where,
+      _max: { createdAt: true },
+      _count: { id: true }
+    });
+
+    const unreadCounts: Record<string, number> = {};
+
+    for (const group of replies) {
+      const lastRead = readMap.get(group.messageId);
+      if (!lastRead || (group._max.createdAt && group._max.createdAt > lastRead)) {
+        // Count how many replies are unread
+        if (lastRead) {
+          const unreadCount = await this.prisma.threadReply.count({
+            where: {
+              messageId: group.messageId,
+              createdAt: { gt: lastRead }
+            }
+          });
+          if (unreadCount > 0) {
+            unreadCounts[group.messageId] = unreadCount;
+          }
+        } else {
+          // Never read - all replies are unread
+          unreadCounts[group.messageId] = group._count.id;
+        }
+      }
+    }
+
+    return { unreadCounts };
+  }
+
+  async markThreadRead(currentUserId: string, messageId: string) {
+    await this.prisma.threadReplyRead.upsert({
+      where: {
+        userId_messageId: {
+          userId: currentUserId,
+          messageId
+        }
+      },
+      update: { lastReadAt: new Date() },
+      create: {
+        userId: currentUserId,
+        messageId,
+        lastReadAt: new Date()
+      }
+    });
+
+    return { ok: true };
+  }
+
   async getDirectConversationForUser(userId: string, conversationId: string) {
     await this.ensureConversationMember(userId, conversationId);
 

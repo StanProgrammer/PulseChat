@@ -20,6 +20,8 @@ model User {
   messages            Message[]
   uploadedAttachments Attachment[]          @relation("AttachmentUploader")
   conversationMembers ConversationMember[]
+  threadReplies       ThreadReply[]
+  threadReplyReads    ThreadReplyRead[]
 
   @@index([workspaceName])
   @@index([workspaceName, name])
@@ -50,6 +52,8 @@ model Message {
   sender         User         @relation(fields: [senderId], references: [id])
   senderId       String
   attachments    Attachment[]
+  threadReplies  ThreadReply[]
+  threadReplyReads ThreadReplyRead[]
 
   @@index([conversationId, createdAt])
   @@index([senderId])
@@ -83,8 +87,39 @@ model Conversation {
   updatedAt DateTime             @updatedAt
   members   ConversationMember[]
   messages  Message[]
+  threadReplies ThreadReply[]
 
   @@index([type, updatedAt])
+}
+
+model ThreadReply {
+  id             String       @id @default(cuid())
+  content        String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  messageId      String
+  message        Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation(fields: [senderId], references: [id])
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, createdAt])
+  @@index([senderId])
+  @@index([conversationId, createdAt])
+}
+
+model ThreadReplyRead {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageId      String
+  message        Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  lastReadAt     DateTime     @default(now())
+
+  @@unique([userId, messageId])
+  @@index([userId])
+  @@index([messageId])
 }
 
 model ConversationMember {

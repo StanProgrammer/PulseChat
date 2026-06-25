@@ -360,6 +360,7 @@ export function useDirectMessaging(accessToken: string, user: User) {
     searchResults,
     setActiveConversationId,
     setQuery,
+    socketRef,
     socketStatus,
     startConversation,
     sendMessage,
