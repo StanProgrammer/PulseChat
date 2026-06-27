@@ -1,10 +1,24 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ClipboardEvent, FormEvent, KeyboardEvent } from 'react';
 import type { User } from '../../types/auth';
 import type { AttachmentInfo, ThreadReply as ThreadReplyType } from '../../api/messaging';
 import { canPreviewInBrowser, formatFileSize, getFileDownloadUrl, getFileExtension } from '../../api/messaging';
 import type { RealtimeMessage, SocketStatus } from './types';
 import Avatar from './Avatar';
+import EmojiPickerPopover from './EmojiPickerPopover';
+import {
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  List,
+  ListOrdered,
+  Code,
+  Terminal,
+  Link,
+  Smile
+} from 'lucide-react';
 import {
   createLinkHtml,
   escapeHtml,
@@ -16,6 +30,7 @@ import {
 import {
   findClosestLink,
   getActiveEditorCommands,
+  insertTextAtSavedSelection,
   toggleEditorCommand,
   toggleInlineCode,
   type TextFormatCommand
@@ -25,6 +40,15 @@ import { detectMentionAtCursor, insertMentionAtCursor, type MentionMatch, type M
 import { createClientMessageId } from './messageUtils';
 import type { Socket } from 'socket.io-client';
 import type { ServerToClientEvents, ClientToServerEvents } from './types';
+import {
+  loadRecentEmojis,
+  MAX_RECENT_EMOJIS,
+  persistRecentEmojis,
+  updateRecentEmojis,
+  type RecentEmoji,
+  type SelectedEmoji
+} from './recentEmojis';
+import { usePopoverPosition } from './usePopoverPosition';
 
 /* ─── ThreadPanel props ─── */
 
@@ -50,17 +74,13 @@ type ThreadPanelProps = {
 };
 
 const TEXT_FORMAT_OPTIONS = [
-  { label: 'B', title: 'Bold', command: 'bold', styleClass: 'bold' },
-  { label: 'I', title: 'Italic', command: 'italic', styleClass: 'italic' },
-  { label: 'U', title: 'Underline', command: 'underline', styleClass: 'underline' },
-  { label: 'S', title: 'Strikethrough', command: 'strikeThrough', styleClass: 'strikethrough' },
-  { label: '\u2022', title: 'Bulleted list', command: 'insertUnorderedList', styleClass: 'unordered-list' },
-  { label: '1.', title: 'Numbered list', command: 'insertOrderedList', styleClass: 'ordered-list' }
+  { icon: Bold, title: 'Bold', command: 'bold' },
+  { icon: Italic, title: 'Italic', command: 'italic' },
+  { icon: Underline, title: 'Underline', command: 'underline' },
+  { icon: Strikethrough, title: 'Strikethrough', command: 'strikeThrough' },
+  { icon: List, title: 'Bulleted list', command: 'insertUnorderedList' },
+  { icon: ListOrdered, title: 'Numbered list', command: 'insertOrderedList' }
 ] as const;
-const CODE_FORMAT_OPTION = { label: '<>', title: 'Inline code' } as const;
-const CODE_BLOCK_OPTION = { label: 'pre', title: 'Code block' } as const;
-const LINK_FORMAT_OPTION = { label: 'Link', title: 'Insert link' };
-const EMOJI_FORMAT_OPTION = { label: 'Emoji', title: 'Insert emoji' };
 const EMOJI_PICKER_ID = 'thread-emoji-picker';
 
 function ThreadPanel({
@@ -92,6 +112,7 @@ function ThreadPanel({
   const [isLinkPopoverOpen, setIsLinkPopoverOpen] = useState(false);
   const [isEmojiPopoverOpen, setIsEmojiPopoverOpen] = useState(false);
   const [linkDraft, setLinkDraft] = useState({ text: '', url: '', error: '' });
+  const [recentEmojis, setRecentEmojis] = useState<RecentEmoji[]>(() => loadRecentEmojis());
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState('');
   const [replyDeleteConfirmId, setReplyDeleteConfirmId] = useState<string | null>(null);
@@ -100,7 +121,34 @@ function ThreadPanel({
   const composerRef = useRef<HTMLFormElement | null>(null);
   const savedSelectionRef = useRef<Range | null>(null);
   const linkTextInputRef = useRef<HTMLInputElement | null>(null);
+  const linkButtonRef = useRef<HTMLButtonElement | null>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement | null>(null);
   const repliesEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Floating popover positioning (scroll-aware, flips to available space)
+  const {
+    style: linkPopoverStyle,
+    popoverRef: linkPopoverRef
+  } = usePopoverPosition({
+    isOpen: isLinkPopoverOpen,
+    triggerRef: linkButtonRef,
+    preferredPlacement: 'top',
+    width: 352,
+    height: 220,
+    gap: 6
+  });
+
+  const {
+    style: emojiPopoverStyle,
+    popoverRef: emojiPopoverRef
+  } = usePopoverPosition({
+    isOpen: isEmojiPopoverOpen,
+    triggerRef: emojiButtonRef,
+    preferredPlacement: 'top',
+    width: 448,
+    height: 420,
+    gap: 6
+  });
   const mentionMatchRef = useRef<MentionMatch | null>(null);
   mentionMatchRef.current = mentionMatch;
   const markedReadRef = useRef(alreadyRead);
@@ -214,6 +262,14 @@ function ThreadPanel({
     return () => document.removeEventListener('selectionchange', updateActiveMarks);
   }, []);
 
+  const closeAllPopovers = useCallback(() => {
+    setIsLinkPopoverOpen(false);
+    setIsEmojiPopoverOpen(false);
+    setLinkDraft({ text: '', url: '', error: '' });
+    setMentionOpen(false);
+    setMentionMatch(null);
+  }, []);
+
   // Close popovers on outside click / Escape
   useEffect(() => {
     if (!isLinkPopoverOpen && !isEmojiPopoverOpen && !mentionOpen) return;
@@ -223,21 +279,16 @@ function ThreadPanel({
       if (!(target instanceof Node)) return;
       if (composerRef.current?.contains(target)) return;
       if (target instanceof Element && target.closest('.mention-dropdown')) return;
+      if (target instanceof Element && target.closest('.emoji-popover')) return;
       if (target instanceof Element && target.closest('.thread-panel')) return;
-      setIsLinkPopoverOpen(false);
-      setIsEmojiPopoverOpen(false);
-      setLinkDraft({ text: '', url: '', error: '' });
-      setMentionOpen(false);
-      setMentionMatch(null);
+      if (target instanceof Element && target.closest('.link-popover')) return;
+      closeAllPopovers();
     };
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      setIsLinkPopoverOpen(false);
-      setIsEmojiPopoverOpen(false);
-      setLinkDraft({ text: '', url: '', error: '' });
-      setMentionOpen(false);
-      setMentionMatch(null);
+      closeAllPopovers();
+      editorRef.current?.focus();
     };
 
     document.addEventListener('pointerdown', handlePointerDown);
@@ -246,7 +297,7 @@ function ThreadPanel({
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isEmojiPopoverOpen, isLinkPopoverOpen, mentionOpen]);
+  }, [isEmojiPopoverOpen, isLinkPopoverOpen, mentionOpen, closeAllPopovers]);
 
   const saveEditorSelection = () => {
     const editor = editorRef.current;
@@ -403,6 +454,7 @@ function ThreadPanel({
     if (!editor) return;
     editor.focus();
     setIsEmojiPopoverOpen(false);
+    closeMentionDropdown();
     if (!selection || !selection.rangeCount) {
       const fallbackRange = document.createRange();
       fallbackRange.selectNodeContents(editor);
@@ -472,6 +524,7 @@ function ThreadPanel({
     if (!editor) return;
     setIsLinkPopoverOpen(false);
     setLinkDraft({ text: '', url: '', error: '' });
+    closeMentionDropdown();
     editor.focus();
     saveEditorSelection();
     if (!savedSelectionRef.current) {
@@ -482,6 +535,48 @@ function ThreadPanel({
     }
     setIsEmojiPopoverOpen((current) => !current);
   };
+
+  /* ── Emoji functions ── */
+
+  const insertEmoji = useCallback((emoji: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    insertTextAtSavedSelection(editor, savedSelectionRef, emoji);
+    const html = editor.innerHTML;
+    setDraftHtml(sanitizeMessageHtml(html));
+    setDraftText(editor.textContent || '');
+    setIsEmojiPopoverOpen(false);
+  }, []);
+
+  const handleCloseEmojiPopover = useCallback(() => {
+    setIsEmojiPopoverOpen(false);
+    editorRef.current?.focus();
+  }, []);
+
+  const handleEmojiSelect = useCallback(
+    (emojiData: SelectedEmoji) => {
+      insertEmoji(emojiData.native);
+      setRecentEmojis((current) => {
+        const next = updateRecentEmojis(current, emojiData);
+        persistRecentEmojis(next);
+        return next;
+      });
+    },
+    [insertEmoji]
+  );
+
+  const handleRecentEmojiInsert = useCallback(
+    (emoji: RecentEmoji) => {
+      insertEmoji(emoji.emoji);
+      setRecentEmojis((current) => {
+        const next = [emoji, ...current.filter((item) => item.unified !== emoji.unified)].slice(0, MAX_RECENT_EMOJIS);
+        persistRecentEmojis(next);
+        return next;
+      });
+    },
+    [insertEmoji]
+  );
 
   const isParentOwn = parentMessage.sender.id === currentUserId;
 
@@ -659,38 +754,43 @@ function ThreadPanel({
 
           <div className="thread-composer-footer">
             <div className="composer-toolbar" aria-label="Reply formatting tools">
-              {TEXT_FORMAT_OPTIONS.map((option) => (
-                <button
-                  aria-pressed={activeMarks[option.command]}
-                  className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
-                  key={option.title}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    toggleEditorCommand(editorRef.current, option.command, () => {});
-                    setActiveMarks(getActiveEditorCommands());
-                  }}
-                  title={option.title}
-                  type="button"
-                >
-                  <span className={`composer-tool-${option.styleClass}`}>{option.label}</span>
-                </button>
-              ))}
+              {TEXT_FORMAT_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <button
+                    aria-pressed={activeMarks[option.command]}
+                    className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
+                    key={option.title}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      toggleEditorCommand(editorRef.current, option.command, () => {});
+                      setActiveMarks(getActiveEditorCommands());
+                    }}
+                    aria-label={option.title}
+                    title={option.title}
+                    type="button"
+                  >
+                    <Icon size={16} />
+                  </button>
+                );
+              })}
               <span aria-hidden="true" className="composer-toolbar-divider" />
               <button
                 aria-pressed={activeMarks.code}
-                className={`composer-tool composer-tool-code ${activeMarks.code ? 'composer-tool-active' : ''}`}
+                className={`composer-tool ${activeMarks.code ? 'composer-tool-active' : ''}`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   toggleInlineCode(editorRef.current, () => {});
                   setActiveMarks(getActiveEditorCommands());
                 }}
-                title={CODE_FORMAT_OPTION.title}
+                aria-label="Inline code"
+                title="Inline code"
                 type="button"
               >
-                {CODE_FORMAT_OPTION.label}
+                <Code size={16} />
               </button>
               <button
-                className="composer-tool composer-tool-code-block"
+                className="composer-tool"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   const editor = editorRef.current;
@@ -712,37 +812,42 @@ function ThreadPanel({
                   selection.addRange(range);
                   handleEditorInput();
                 }}
-                title={CODE_BLOCK_OPTION.title}
+                aria-label="Code block"
+                title="Code block"
                 type="button"
               >
-                {CODE_BLOCK_OPTION.label}
+                <Terminal size={16} />
               </button>
               <span aria-hidden="true" className="composer-toolbar-divider" />
               <button
+                ref={linkButtonRef}
                 aria-expanded={isLinkPopoverOpen}
-                className={`composer-tool composer-tool-link ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}
+                className={`composer-tool ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={openLinkPopover}
-                title={LINK_FORMAT_OPTION.title}
+                aria-label="Insert link"
+                title="Insert link"
                 type="button"
               >
-                {LINK_FORMAT_OPTION.label}
+                <Link size={16} />
               </button>
               <button
+                ref={emojiButtonRef}
                 aria-controls={EMOJI_PICKER_ID}
                 aria-expanded={isEmojiPopoverOpen}
-                className={`composer-tool composer-tool-emoji ${isEmojiPopoverOpen ? 'composer-tool-active' : ''}`}
+                className={`composer-tool ${isEmojiPopoverOpen ? 'composer-tool-active' : ''}`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={openEmojiPopover}
-                title={EMOJI_FORMAT_OPTION.title}
+                aria-label="Insert emoji"
+                title="Insert emoji"
                 type="button"
               >
-                {EMOJI_FORMAT_OPTION.label}
+                <Smile size={16} />
               </button>
             </div>
 
-            {isLinkPopoverOpen && (
-              <div aria-label="Insert link" className="link-popover" onKeyDown={handleLinkPopoverKeyDown} role="dialog" style={{ position: 'absolute' }}>
+            {isLinkPopoverOpen && createPortal(
+              <div ref={linkPopoverRef} aria-label="Insert link" className="link-popover" onKeyDown={handleLinkPopoverKeyDown} role="dialog" style={linkPopoverStyle}>
                 <label><span>Text</span><input ref={linkTextInputRef} onChange={(event) => setLinkDraft((current) => ({ ...current, text: event.target.value, error: '' }))} placeholder="Display text" value={linkDraft.text} /></label>
                 <label><span>Link</span><input inputMode="url" onChange={(event) => setLinkDraft((current) => ({ ...current, url: event.target.value, error: '' }))} placeholder="https://example.com" value={linkDraft.url} /></label>
                 {linkDraft.error && <p className="link-popover-error">{linkDraft.error}</p>}
@@ -750,13 +855,21 @@ function ThreadPanel({
                   <button className="link-popover-secondary" onClick={closeLinkPopover} type="button">Cancel</button>
                   <button className="link-popover-primary" onClick={insertLink} type="button">Insert</button>
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
 
-            {isEmojiPopoverOpen && (
-              <div className="thread-emoji-placeholder">
-                <p>Emoji picker</p>
-              </div>
+            {isEmojiPopoverOpen && createPortal(
+              <EmojiPickerPopover
+                id={EMOJI_PICKER_ID}
+                innerRef={emojiPopoverRef}
+                onClose={handleCloseEmojiPopover}
+                onEmojiSelect={handleEmojiSelect}
+                onRecentEmojiSelect={handleRecentEmojiInsert}
+                recentEmojis={recentEmojis}
+                style={emojiPopoverStyle}
+              />,
+              document.body
             )}
 
             <button

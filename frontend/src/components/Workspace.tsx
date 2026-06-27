@@ -8,6 +8,19 @@ import type {
   KeyboardEvent
 } from 'react';
 import {
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  List,
+  ListOrdered,
+  Code,
+  Terminal,
+  Link,
+  Smile,
+  Paperclip
+} from 'lucide-react';
+import {
   canPreviewInBrowser,
   formatFileSize,
   getFileExtension,
@@ -60,6 +73,7 @@ import {
 } from './workspace/mentionUtils';
 import MentionDropdown from './workspace/MentionDropdown';
 import ThreadPanel from './workspace/ThreadPanel';
+import { usePopoverPosition } from './workspace/usePopoverPosition';
 
 type WorkspaceProps = {
   user: User;
@@ -69,17 +83,13 @@ type WorkspaceProps = {
 };
 
 const TEXT_FORMAT_OPTIONS = [
-  { label: 'B', title: 'Bold', command: 'bold', styleClass: 'bold' },
-  { label: 'I', title: 'Italic', command: 'italic', styleClass: 'italic' },
-  { label: 'U', title: 'Underline', command: 'underline', styleClass: 'underline' },
-  { label: 'S', title: 'Strikethrough', command: 'strikeThrough', styleClass: 'strikethrough' },
-  { label: '\u2022', title: 'Bulleted list', command: 'insertUnorderedList', styleClass: 'unordered-list' },
-  { label: '1.', title: 'Numbered list', command: 'insertOrderedList', styleClass: 'ordered-list' }
+  { icon: Bold, title: 'Bold', command: 'bold' },
+  { icon: Italic, title: 'Italic', command: 'italic' },
+  { icon: Underline, title: 'Underline', command: 'underline' },
+  { icon: Strikethrough, title: 'Strikethrough', command: 'strikeThrough' },
+  { icon: List, title: 'Bulleted list', command: 'insertUnorderedList' },
+  { icon: ListOrdered, title: 'Numbered list', command: 'insertOrderedList' }
 ] as const;
-const CODE_FORMAT_OPTION = { label: '<>', title: 'Inline code' } as const;
-const CODE_BLOCK_OPTION = { label: 'pre', title: 'Code block' } as const;
-const LINK_FORMAT_OPTION = { label: 'Link', title: 'Insert link' };
-const EMOJI_FORMAT_OPTION = { label: 'Emoji', title: 'Insert emoji' };
 const EMOJI_PICKER_ID = 'composer-emoji-picker';
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const ALLOWED_UPLOAD_MIME_TYPES = new Set([
@@ -549,10 +559,10 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
 /* ─── Message stream (conversation messages only) ─── */
 
 const EDIT_TEXT_FORMATS = [
-  { label: 'B', title: 'Bold', command: 'bold', styleClass: 'bold' },
-  { label: 'I', title: 'Italic', command: 'italic', styleClass: 'italic' },
-  { label: 'U', title: 'Underline', command: 'underline', styleClass: 'underline' },
-  { label: 'S', title: 'Strikethrough', command: 'strikeThrough', styleClass: 'strikethrough' }
+  { icon: Bold, title: 'Bold', command: 'bold' },
+  { icon: Italic, title: 'Italic', command: 'italic' },
+  { icon: Underline, title: 'Underline', command: 'underline' },
+  { icon: Strikethrough, title: 'Strikethrough', command: 'strikeThrough' }
 ] as const;
 
 function MessageStream({
@@ -938,19 +948,22 @@ function MessageStream({
                   <div className="message-edit-shell">
                     {/* Formatting toolbar */}
                     <div className="message-edit-toolbar" aria-label="Edit formatting tools">
-                      {EDIT_TEXT_FORMATS.map((opt) => (
-                        <button
-                          aria-pressed={editMarks[opt.command]}
-                          className={`composer-tool ${editMarks[opt.command] ? 'composer-tool-active' : ''}`}
-                          key={opt.title}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => toggleEditFormat(opt.command)}
+                      {EDIT_TEXT_FORMATS.map((opt) => {
+                        const Icon = opt.icon;
+                        return (
+                          <button
+                            aria-pressed={editMarks[opt.command]}
+                            className={`composer-tool ${editMarks[opt.command] ? 'composer-tool-active' : ''}`}
+                            key={opt.title}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => toggleEditFormat(opt.command)}                          aria-label={opt.title}
                           title={opt.title}
                           type="button"
                         >
-                          <span className={`composer-tool-${opt.styleClass}`}>{opt.label}</span>
-                        </button>
-                      ))}
+                            <Icon size={14} />
+                          </button>
+                        );
+                      })}
                     </div>
 
                     <div
@@ -1317,6 +1330,8 @@ function MessageComposer({
   const editorRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement | null>(null);
+  const linkButtonRef = useRef<HTMLButtonElement | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const savedSelectionRef = useRef<Range | null>(null);
   const linkTextInputRef = useRef<HTMLInputElement | null>(null);
@@ -1333,6 +1348,31 @@ function MessageComposer({
   const [isEmojiPopoverOpen, setIsEmojiPopoverOpen] = useState(false);
   const [linkDraft, setLinkDraft] = useState({ text: '', url: '', error: '' });
   const [recentEmojis, setRecentEmojis] = useState<RecentEmoji[]>(() => loadRecentEmojis());
+
+  // Floating popover positioning (scroll-aware, flips to available space)
+  const {
+    style: linkPopoverStyle,
+    popoverRef: linkPopoverRef
+  } = usePopoverPosition({
+    isOpen: isLinkPopoverOpen,
+    triggerRef: linkButtonRef,
+    preferredPlacement: 'top',
+    width: 352,
+    height: 220,
+    gap: 8
+  });
+
+  const {
+    style: emojiPopoverStyle,
+    popoverRef: emojiPopoverRef
+  } = usePopoverPosition({
+    isOpen: isEmojiPopoverOpen,
+    triggerRef: emojiButtonRef,
+    preferredPlacement: 'top',
+    width: 448,
+    height: 420,
+    gap: 8
+  });
 
   /* ── @mention state ── */
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -1472,6 +1512,13 @@ function MessageComposer({
     return () => document.removeEventListener('selectionchange', updateActiveMarks);
   }, []);
 
+  const closeAllPopovers = useCallback(() => {
+    setIsLinkPopoverOpen(false);
+    setIsEmojiPopoverOpen(false);
+    setLinkDraft({ text: '', url: '', error: '' });
+    closeMentionDropdown();
+  }, [closeMentionDropdown]);
+
   // Close popovers on outside click / Escape / scroll
   useEffect(() => {
     if (!isLinkPopoverOpen && !isEmojiPopoverOpen && !mentionOpen) return;
@@ -1481,20 +1528,16 @@ function MessageComposer({
       if (!(target instanceof Node)) return;
       // Don't close if clicking inside the composer
       if (composerRef.current?.contains(target)) return;
-      // Don't close if clicking inside the portaled mention dropdown
+      // Don't close if clicking inside ported popovers
       if (target instanceof Element && target.closest('.mention-dropdown')) return;
-      setIsLinkPopoverOpen(false);
-      setIsEmojiPopoverOpen(false);
-      setLinkDraft({ text: '', url: '', error: '' });
-      closeMentionDropdown();
+      if (target instanceof Element && target.closest('.emoji-popover')) return;
+      if (target instanceof Element && target.closest('.link-popover')) return;
+      closeAllPopovers();
     };
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      setIsLinkPopoverOpen(false);
-      setIsEmojiPopoverOpen(false);
-      setLinkDraft({ text: '', url: '', error: '' });
-      closeMentionDropdown();
+      closeAllPopovers();
       editorRef.current?.focus();
     };
 
@@ -1518,7 +1561,7 @@ function MessageComposer({
         scrollEl.removeEventListener('scroll', handleScroll);
       }
     };
-  }, [isEmojiPopoverOpen, isLinkPopoverOpen, mentionOpen, closeMentionDropdown]);
+  }, [isEmojiPopoverOpen, isLinkPopoverOpen, mentionOpen, closeMentionDropdown, closeAllPopovers]);
 
   /* ── Link popover ── */
 
@@ -1529,6 +1572,7 @@ function MessageComposer({
 
     editor.focus();
     setIsEmojiPopoverOpen(false);
+    closeMentionDropdown();
 
     if (!selection || !selection.rangeCount) {
       const fallbackRange = document.createRange();
@@ -1647,6 +1691,7 @@ function MessageComposer({
 
     setIsLinkPopoverOpen(false);
     setLinkDraft({ text: '', url: '', error: '' });
+    closeMentionDropdown();
     editor.focus();
     saveEditorSelection();
 
@@ -1778,88 +1823,99 @@ function MessageComposer({
 
       <div className="composer-footer">
         <div className="composer-toolbar" aria-label="Message formatting tools">
-          {TEXT_FORMAT_OPTIONS.map((option) => (
-            <button
-              aria-pressed={activeMarks[option.command]}
-              className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
-              key={option.title}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                toggleEditorCommand(editorRef.current, option.command, syncEditorDraft);
-                setActiveMarks(getActiveEditorCommands());
-              }}
-              title={option.title}
-              type="button"
-            >
-              <span className={`composer-tool-${option.styleClass}`}>{option.label}</span>
-            </button>
-          ))}
+          {TEXT_FORMAT_OPTIONS.map((option) => {
+            const Icon = option.icon;
+            return (
+              <button
+                aria-pressed={activeMarks[option.command]}
+                className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
+                key={option.title}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  toggleEditorCommand(editorRef.current, option.command, syncEditorDraft);
+                  setActiveMarks(getActiveEditorCommands());
+                }}
+                aria-label={option.title}
+                title={option.title}
+                type="button"
+              >
+                <Icon size={16} />
+              </button>
+            );
+          })}
 
           <span aria-hidden="true" className="composer-toolbar-divider" />
 
           <button
             aria-pressed={activeMarks.code}
-            className={`composer-tool composer-tool-code ${activeMarks.code ? 'composer-tool-active' : ''}`}
+            className={`composer-tool ${activeMarks.code ? 'composer-tool-active' : ''}`}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               toggleInlineCode(editorRef.current, syncEditorDraft);
               setActiveMarks(getActiveEditorCommands());
             }}
-            title={CODE_FORMAT_OPTION.title}
+            aria-label="Inline code"
+            title="Inline code"
             type="button"
           >
-            {CODE_FORMAT_OPTION.label}
+            <Code size={16} />
           </button>
           <button
-            className="composer-tool composer-tool-code-block"
+            className="composer-tool"
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               insertCodeBlock(editorRef.current, syncEditorDraft);
             }}
-            title={CODE_BLOCK_OPTION.title}
+            aria-label="Code block"
+            title="Code block"
             type="button"
           >
-            {CODE_BLOCK_OPTION.label}
+            <Terminal size={16} />
           </button>
 
           <span aria-hidden="true" className="composer-toolbar-divider" />
 
           <button
+            ref={linkButtonRef}
             aria-expanded={isLinkPopoverOpen}
-            className={`composer-tool composer-tool-link ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}
+            className={`composer-tool ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openLinkPopover}
-            title={LINK_FORMAT_OPTION.title}
+            aria-label="Insert link"
+            title="Insert link"
             type="button"
           >
-            {LINK_FORMAT_OPTION.label}
+            <Link size={16} />
           </button>
           <button
+            ref={emojiButtonRef}
             aria-controls={EMOJI_PICKER_ID}
             aria-expanded={isEmojiPopoverOpen}
-            className={`composer-tool composer-tool-emoji ${isEmojiPopoverOpen ? 'composer-tool-active' : ''}`}
+            className={`composer-tool ${isEmojiPopoverOpen ? 'composer-tool-active' : ''}`}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openEmojiPopover}
-            title={EMOJI_FORMAT_OPTION.title}
+            aria-label="Insert emoji"
+            title="Insert emoji"
             type="button"
           >
-            {EMOJI_FORMAT_OPTION.label}
+            <Smile size={16} />
           </button>
 
           <span aria-hidden="true" className="composer-toolbar-divider" />
 
           <button
-            className="composer-tool composer-tool-attach"
+            className="composer-tool"
             onClick={handleFileButtonClick}
+            aria-label="Attach file"
             title="Attach file"
             type="button"
           >
-            +Attach
+            <Paperclip size={16} />
           </button>
         </div>
 
-        {isLinkPopoverOpen && (
-          <div aria-label="Insert link" className="link-popover" onKeyDown={handleLinkPopoverKeyDown} role="dialog">
+        {isLinkPopoverOpen && createPortal(
+          <div ref={linkPopoverRef} aria-label="Insert link" className="link-popover" onKeyDown={handleLinkPopoverKeyDown} role="dialog" style={linkPopoverStyle}>
             <label>
               <span>Text</span>
               <input
@@ -1887,17 +1943,21 @@ function MessageComposer({
                 Insert
               </button>
             </div>
-          </div>
+          </div>,
+          document.body
         )}
 
-        {isEmojiPopoverOpen && (
+        {isEmojiPopoverOpen && createPortal(
           <EmojiPickerPopover
             id={EMOJI_PICKER_ID}
+            innerRef={emojiPopoverRef}
             onClose={handleCloseEmojiPopover}
             onEmojiSelect={handleEmojiSelect}
             onRecentEmojiSelect={handleRecentEmojiInsert}
             recentEmojis={recentEmojis}
-          />
+            style={emojiPopoverStyle}
+          />,
+          document.body
         )}
 
         <span className="composer-meta">

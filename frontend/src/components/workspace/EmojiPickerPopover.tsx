@@ -43,6 +43,10 @@ type EmojiPickerPopoverProps = {
   onEmojiSelect: (emoji: SelectedEmoji) => void;
   onRecentEmojiSelect: (emoji: RecentEmoji) => void;
   recentEmojis: RecentEmoji[];
+  /** Optional inline style for fixed positioning when portaled */
+  style?: React.CSSProperties;
+  /** Ref access for outside-click detection */
+  innerRef?: React.RefObject<HTMLDivElement | null>;
 };
 
 function EmojiPickerPopover({
@@ -50,7 +54,9 @@ function EmojiPickerPopover({
   onClose,
   onEmojiSelect,
   onRecentEmojiSelect,
-  recentEmojis
+  recentEmojis,
+  style,
+  innerRef
 }: EmojiPickerPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const recentEmojisRef = useRef<HTMLDivElement | null>(null);
@@ -135,7 +141,7 @@ function EmojiPickerPopover({
   };
 
   return (
-    <div aria-label="Choose an emoji" className="emoji-popover" data-testid="emoji-picker-popover" id={id} ref={popoverRef} role="dialog">
+    <div aria-label="Choose an emoji" className="emoji-popover" data-testid="emoji-picker-popover" id={id} ref={innerRef || popoverRef} role="dialog" style={style}>
       <header className="emoji-popover-header">
         <div>
           <p className="emoji-popover-eyebrow">Message tools</p>
