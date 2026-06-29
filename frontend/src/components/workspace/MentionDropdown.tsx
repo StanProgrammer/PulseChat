@@ -4,7 +4,7 @@ import type { Teammate } from '../../api/messaging';
 import { searchMentionableUsers } from '../../api/messaging';
 import Avatar from './Avatar';
 import { escapeHtml, getInitials } from './messageUtils';
-import type { MentionSelection } from './mentionUtils';
+import { normalizeMentionQuery, type MentionSelection } from './mentionUtils';
 
 type MentionDropdownProps = {
   accessToken: string;
@@ -13,6 +13,7 @@ type MentionDropdownProps = {
   onClose: () => void;
   /** Users to exclude from the list (e.g., self) */
   excludeUserIds?: string[];
+  conversationId?: string;
   /** The editor element — used as fallback for positioning */
   editorElement: HTMLDivElement | null;
   /** Cursor bounding rect captured at the moment the mention was detected.
@@ -48,7 +49,8 @@ function getDropdownPosition(rect: DOMRect): {
   // The cursor is at `rect.left` (collapsed range→0 width, but some UAs return
   // a tiny rect). We inset the dropdown a bit so the connector is visible.
   let left = Math.round(rect.left - CURSOR_OFFSET);
-  let top = Math.round(rect.bottom + GAP);
+  let top: number | undefined = Math.round(rect.bottom + GAP);
+  let bottom: number | undefined;
   let above = false;
 
   // Prevent right-edge overflow
@@ -67,7 +69,10 @@ function getDropdownPosition(rect: DOMRect): {
   if (bottomSpace < DROPDOWN_HEIGHT) {
     const spaceAbove = rect.top - GAP;
     if (spaceAbove >= DROPDOWN_HEIGHT || spaceAbove > bottomSpace) {
-      top = Math.max(8, Math.round(rect.top - GAP - DROPDOWN_HEIGHT));
+      // Anchor the panel's bottom edge to the caret. Using a guessed panel
+      // height here leaves short result lists floating far above the editor.
+      top = undefined;
+      bottom = Math.max(8, Math.round(window.innerHeight - rect.top + GAP));
       above = true;
     }
   }
@@ -84,6 +89,7 @@ function getDropdownPosition(rect: DOMRect): {
       position: 'fixed',
       left,
       top,
+      bottom,
       zIndex: 100
     },
     above,
@@ -97,6 +103,7 @@ export default function MentionDropdown({
   onSelect,
   onClose,
   excludeUserIds = [],
+  conversationId,
   editorElement,
   cursorRect
 }: MentionDropdownProps) {
@@ -108,6 +115,8 @@ export default function MentionDropdown({
   const [connectorLeft, setConnectorLeft] = useState<number>(14);
   const listRef = useRef<HTMLDivElement | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const latestRequestRef = useRef(0);
 
   // Compute position from the cursor rect captured at detection time.
   // This avoids any timing issues with re-reading window.getSelection()
@@ -158,45 +167,62 @@ export default function MentionDropdown({
   }, [cursorRect, editorElement, query]);
 
   useEffect(() => {
-    if (!query) {
-      // Show all users when query is empty (just typed @)
-      searchUsers(' ');
-      return;
-    }
+    const normalizedQuery = normalizeMentionQuery(query);
 
-    searchUsers(query);
-
-    return () => {
+    const cleanup = () => {
       if (searchTimeoutRef.current) {
         clearTimeout(searchTimeoutRef.current);
       }
+      abortControllerRef.current?.abort();
     };
-  }, [query, accessToken]);
+
+    if (!normalizedQuery) {
+      // Show all users when query is empty (just typed @)
+      searchUsers(' ');
+      return cleanup;
+    }
+
+    searchUsers(normalizedQuery);
+    return cleanup;
+  }, [query, accessToken, conversationId]);
 
   const searchUsers = (searchQuery: string) => {
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
 
+    abortControllerRef.current?.abort();
+
     setLoading(true);
 
     searchTimeoutRef.current = setTimeout(() => {
-      searchMentionableUsers(accessToken, searchQuery)
+      const requestId = latestRequestRef.current + 1;
+      latestRequestRef.current = requestId;
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      searchMentionableUsers(accessToken, searchQuery, conversationId, controller.signal)
         .then((response) => {
+          if (latestRequestRef.current !== requestId) return;
           const filtered = response.users.filter(
             (user) => !excludeUserIds.includes(user.id)
           );
           setResults(filtered);
           setActiveIndex(0);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            return;
+          }
+          if (latestRequestRef.current !== requestId) return;
           setResults([]);
         })
         .finally(() => {
+          if (latestRequestRef.current !== requestId) return;
           setLoading(false);
         });
     }, SEARCH_DEBOUNCE_MS);
-  }
+  };
 
   const selectItem = useCallback(
     (index: number) => {
@@ -268,7 +294,7 @@ export default function MentionDropdown({
   }, [results.length]);
 
   // The raw query text (what the user typed after @)
-  const rawQuery = !query ? '' : query;
+  const rawQuery = query ? normalizeMentionQuery(query) : '';
   // Escape for regex safety when splitting the name
   const escapedQuery = rawQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const splitRegex = escapedQuery ? new RegExp(`(${escapedQuery})`, 'gi') : null;

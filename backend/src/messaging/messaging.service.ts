@@ -43,6 +43,14 @@ const conversationInclude = {
   }
 } satisfies Prisma.ConversationInclude;
 
+function normalizeMentionSearchQuery(query: string): string {
+  return query
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 @Injectable()
 export class MessagingService {
   constructor(private readonly prisma: PrismaService) {}
@@ -85,7 +93,7 @@ export class MessagingService {
    */
   async searchMentionableUsers(currentUserId: string, query: string, conversationId?: string) {
     const currentUser = await this.getCurrentUser(currentUserId);
-    const trimmedQuery = query.trim();
+    const trimmedQuery = normalizeMentionSearchQuery(query);
 
     // Base where: same workspace, exclude self
     const baseWhere: Prisma.UserWhereInput = {
@@ -101,7 +109,10 @@ export class MessagingService {
 
     // Add name filter if there's a query
     if (trimmedQuery) {
-      baseWhere.name = { contains: trimmedQuery, mode: 'insensitive' };
+      baseWhere.OR = [
+        { name: { contains: trimmedQuery, mode: 'insensitive' } },
+        { email: { contains: trimmedQuery, mode: 'insensitive' } }
+      ];
     }
 
     const users = await this.prisma.user.findMany({

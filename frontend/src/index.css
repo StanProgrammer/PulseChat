@@ -1798,8 +1798,9 @@ button:focus-visible {
 }
 
 .mention-dropdown-fixed.mention-dropdown {
-  max-width: 22rem;
-  min-width: 16rem;
+  width: min(20rem, calc(100vw - 1rem));
+  min-width: 0;
+  max-width: calc(100vw - 1rem);
 }
 
 /* Visual connector triangle pointing toward the cursor */

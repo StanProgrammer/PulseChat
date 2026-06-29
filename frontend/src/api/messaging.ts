@@ -63,12 +63,18 @@ export function searchWorkspaceUsers(accessToken: string, query: string) {
   });
 }
 
-export function searchMentionableUsers(accessToken: string, query: string, conversationId?: string) {
+export function searchMentionableUsers(
+  accessToken: string,
+  query: string,
+  conversationId?: string,
+  signal?: AbortSignal
+) {
   const params = new URLSearchParams();
   params.set('query', query);
   if (conversationId) params.set('conversationId', conversationId);
   return apiRequest<{ users: Teammate[] }>(`/messaging/users/mention-search?${params.toString()}`, {
-    headers: authHeaders(accessToken)
+    headers: authHeaders(accessToken),
+    signal
   });
 }
 

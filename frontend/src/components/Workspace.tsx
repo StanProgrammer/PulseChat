@@ -67,6 +67,7 @@ import {
 } from './workspace/recentEmojis';
 import {
   detectMentionAtCursor,
+  getCaretViewportRect,
   insertMentionAtCursor,
   type MentionMatch,
   type MentionSelection
@@ -792,14 +793,7 @@ function MessageStream({
       editMentionMatchRef.current = match;
       setEditMentionMatch(match);
       setEditMentionQuery(match.query);
-      const sel = window.getSelection();
-      let cursorRect: DOMRect | null = null;
-      if (sel && sel.rangeCount > 0) {
-        const range = sel.getRangeAt(0);
-        if (editor.contains(range.commonAncestorContainer)) {
-          cursorRect = range.getBoundingClientRect();
-        }
-      }
+      const cursorRect = getCaretViewportRect(editor);
       setEditMentionCursorRect(cursorRect);
       setEditMentionOpen(true);
     } else {
@@ -1011,6 +1005,7 @@ function MessageStream({
                         accessToken={accessToken}
                         query={editMentionQuery}
                         cursorRect={editMentionCursorRect}
+                        conversationId={conversationId}
                         excludeUserIds={[user.id]}
                         onSelect={handleEditMentionSelect}
                         onClose={closeEditMention}
@@ -1454,16 +1449,7 @@ function MessageComposer({
       setMentionMatch(match);
       mentionMatchRef.current = match;
       setMentionQuery(match.query);
-      // Capture cursor position immediately while the selection is reliable
-      const sel = window.getSelection();
-      let cursorRect: DOMRect | null = null;
-      if (sel && sel.rangeCount > 0) {
-        const range = sel.getRangeAt(0);
-        if (editor.contains(range.commonAncestorContainer)) {
-          cursorRect = range.getBoundingClientRect();
-        }
-      }
-      setMentionCursorRect(cursorRect);
+      setMentionCursorRect(getCaretViewportRect(editor));
       setMentionOpen(true);
     } else {
       closeMentionDropdown();
@@ -1835,6 +1821,7 @@ function MessageComposer({
             accessToken={accessToken}
             query={mentionQuery}
             cursorRect={mentionCursorRect}
+            conversationId={activeConversationId}
             excludeUserIds={[currentUserId]}
             onSelect={handleMentionSelect}
             onClose={closeMentionDropdown}

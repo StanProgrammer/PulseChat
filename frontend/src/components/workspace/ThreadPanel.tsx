@@ -37,7 +37,7 @@ import {
   type TextFormatCommand
 } from './editorUtils';
 import MentionDropdown from './MentionDropdown';
-import { detectMentionAtCursor, insertMentionAtCursor, type MentionMatch, type MentionSelection } from './mentionUtils';
+import { detectMentionAtCursor, getCaretViewportRect, insertMentionAtCursor, type MentionMatch, type MentionSelection } from './mentionUtils';
 import { createClientMessageId } from './messageUtils';
 import type { Socket } from 'socket.io-client';
 import type { ServerToClientEvents, ClientToServerEvents } from './types';
@@ -342,14 +342,7 @@ function ThreadPanel({
       setMentionMatch(match);
       mentionMatchRef.current = match;
       setMentionQuery(match.query);
-      const sel = window.getSelection();
-      let cursorRect: DOMRect | null = null;
-      if (sel && sel.rangeCount > 0) {
-        const range = sel.getRangeAt(0);
-        if (editor.contains(range.commonAncestorContainer)) {
-          cursorRect = range.getBoundingClientRect();
-        }
-      }
+      const cursorRect = getCaretViewportRect(editor);
       setMentionCursorRect(cursorRect);
       setMentionOpen(true);
     } else {
@@ -748,6 +741,7 @@ function ThreadPanel({
                 accessToken={accessToken}
                 query={mentionQuery}
                 cursorRect={mentionCursorRect}
+                conversationId={parentMessage.conversationId}
                 excludeUserIds={[currentUserId]}
                 onSelect={handleMentionSelect}
                 onClose={closeMentionDropdown}

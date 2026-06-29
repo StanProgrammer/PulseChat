@@ -33,6 +33,51 @@ export type MentionSelection = {
   type: MentionType;
 };
 
+const ZERO_WIDTH_CHARS = /[\u200B-\u200D\uFEFF]/g;
+
+export function normalizeMentionQuery(query: string): string {
+  return query
+    .replace(ZERO_WIDTH_CHARS, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Return a viewport-relative caret rectangle for a collapsed editor selection.
+ * Some browsers return an empty bounding box at line boundaries, so a
+ * zero-width marker is used as a final, short-lived measurement fallback. */
+export function getCaretViewportRect(editor: HTMLDivElement): DOMRect | null {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return null;
+
+  const selectionRange = selection.getRangeAt(0);
+  if (!editor.contains(selectionRange.commonAncestorContainer)) return null;
+
+  const range = selectionRange.cloneRange();
+  range.collapse(false);
+  const clientRects = Array.from(range.getClientRects());
+  let visibleRect: DOMRect | undefined;
+  for (let index = clientRects.length - 1; index >= 0; index -= 1) {
+    if (clientRects[index].height > 0) {
+      visibleRect = clientRects[index];
+      break;
+    }
+  }
+  if (visibleRect) return visibleRect;
+
+  const boundingRect = range.getBoundingClientRect();
+  if (boundingRect.height > 0) return boundingRect;
+
+  const marker = document.createElement('span');
+  marker.setAttribute('aria-hidden', 'true');
+  marker.textContent = '\u200b';
+  marker.style.cssText = 'display:inline-block;width:0;overflow:hidden;line-height:inherit;pointer-events:none';
+  range.insertNode(marker);
+  const markerRect = marker.getBoundingClientRect();
+  marker.remove();
+  return markerRect.height > 0 ? markerRect : null;
+}
+
 /**
  * Create the HTML for a mention span.
  */
@@ -88,15 +133,16 @@ export function detectMentionAtCursor(editor: HTMLDivElement): MentionMatch | nu
 
   // Extract the query text after @
   const afterAt = text.slice(atIndex + 1, cursorPos);
+  const normalizedQuery = normalizeMentionQuery(afterAt);
 
   // Query must not contain whitespace
-  if (/\s/.test(afterAt)) return null;
+  if (/\s/.test(afterAt.replace(ZERO_WIDTH_CHARS, ''))) return null;
   // Query length limit
-  if (afterAt.length > 30) return null;
+  if (normalizedQuery.length > 30) return null;
 
   return {
     fullMatch: `@${afterAt}`,
-    query: afterAt,
+    query: normalizedQuery,
     startOffset: atIndex,
     endOffset: cursorPos,
     textNode,
