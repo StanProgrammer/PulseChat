@@ -38,8 +38,8 @@ import {
   findClosestLink,
   getActiveEditorCommands,
   handleListEnterKey,
-  insertCodeBlock,
   insertTextAtSavedSelection,
+  toggleCodeBlock,
   toggleEditorCommand,
   toggleInlineCode,
   type TextFormatCommand
@@ -605,7 +605,7 @@ function MessageStream({
   const [editMentionMatch, setEditMentionMatch] = useState<MentionMatch | null>(null);
   const [editMentionCursorRect, setEditMentionCursorRect] = useState<DOMRect | null>(null);
   const [editMarks, setEditMarks] = useState<Record<string, boolean>>({
-    bold: false, italic: false, underline: false, strikeThrough: false
+    bold: false, italic: false, underline: false, strikeThrough: false, codeBlock: false
   });
   const editEditorInitializedRef = useRef(false);
   const [kebabMenuPosition, setKebabMenuPosition] = useState<{ left: number; top: number } | null>(null);
@@ -680,18 +680,21 @@ function MessageStream({
     }
   }, [editingMessageId]);
 
-  // Track formatting marks for edit editor
+  // Track formatting marks for edit editor — uses getActiveEditorCommands()
+  // which properly handles code block suppression and browser quirks.
   useEffect(() => {
     if (!editingMessageId) return;
     const updateMarks = () => {
       const editor = editEditorRef.current;
       const sel = window.getSelection();
       if (!editor || !sel?.rangeCount || !editor.contains(sel.anchorNode)) return;
+      const cmds = getActiveEditorCommands();
       setEditMarks({
-        bold: document.queryCommandState('bold'),
-        italic: document.queryCommandState('italic'),
-        underline: document.queryCommandState('underline'),
-        strikeThrough: document.queryCommandState('strikeThrough')
+        bold: cmds.bold,
+        italic: cmds.italic,
+        underline: cmds.underline,
+        strikeThrough: cmds.strikeThrough,
+        codeBlock: cmds.codeBlock
       });
     };
     document.addEventListener('selectionchange', updateMarks);
@@ -954,16 +957,41 @@ function MessageStream({
                           <button
                             aria-pressed={editMarks[opt.command]}
                             className={`composer-tool ${editMarks[opt.command] ? 'composer-tool-active' : ''}`}
+                            disabled={editMarks.codeBlock}
                             key={opt.title}
                             onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => toggleEditFormat(opt.command)}                          aria-label={opt.title}
-                          title={opt.title}
-                          type="button"
-                        >
+                            onClick={() => toggleEditFormat(opt.command)}
+                            aria-label={opt.title}
+                            title={editMarks.codeBlock ? `${opt.title} is unavailable in a code block` : opt.title}
+                            type="button"
+                          >
                             <Icon size={14} />
                           </button>
                         );
                       })}
+                      <span aria-hidden="true" className="composer-toolbar-divider" />
+                      <button
+                        aria-pressed={editMarks.codeBlock}
+                        className={`composer-tool ${editMarks.codeBlock ? 'composer-tool-active' : ''}`}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          const editor = editEditorRef.current;
+                          if (!editor) return;
+                          toggleCodeBlock(editor, () => {});
+                          setEditMarks({
+                            ...getActiveEditorCommands(),
+                            bold: document.queryCommandState('bold'),
+                            italic: document.queryCommandState('italic'),
+                            underline: document.queryCommandState('underline'),
+                            strikeThrough: document.queryCommandState('strikeThrough')
+                          });
+                        }}
+                        aria-label="Code block"
+                        title="Code block"
+                        type="button"
+                      >
+                        <Terminal size={14} />
+                      </button>
                     </div>
 
                     <div
@@ -1342,12 +1370,14 @@ function MessageComposer({
     strikeThrough: false,
     insertUnorderedList: false,
     insertOrderedList: false,
-    code: false
+    code: false,
+    codeBlock: false
   });
   const [isLinkPopoverOpen, setIsLinkPopoverOpen] = useState(false);
   const [isEmojiPopoverOpen, setIsEmojiPopoverOpen] = useState(false);
   const [linkDraft, setLinkDraft] = useState({ text: '', url: '', error: '' });
   const [recentEmojis, setRecentEmojis] = useState<RecentEmoji[]>(() => loadRecentEmojis());
+  const isInCodeBlock = activeMarks.codeBlock;
 
   // Floating popover positioning (scroll-aware, flips to available space)
   const {
@@ -1566,6 +1596,7 @@ function MessageComposer({
   /* ── Link popover ── */
 
   const openLinkPopover = () => {
+    if (isInCodeBlock) return;
     const editor = editorRef.current;
     const selection = window.getSelection();
     if (!editor) return;
@@ -1686,6 +1717,7 @@ function MessageComposer({
   /* ── Emoji popover ── */
 
   const openEmojiPopover = () => {
+    if (isInCodeBlock) return;
     const editor = editorRef.current;
     if (!editor) return;
 
@@ -1829,6 +1861,7 @@ function MessageComposer({
               <button
                 aria-pressed={activeMarks[option.command]}
                 className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
+                disabled={isInCodeBlock}
                 key={option.title}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
@@ -1836,7 +1869,7 @@ function MessageComposer({
                   setActiveMarks(getActiveEditorCommands());
                 }}
                 aria-label={option.title}
-                title={option.title}
+                title={isInCodeBlock ? `${option.title} is unavailable in a code block` : option.title}
                 type="button"
               >
                 <Icon size={16} />
@@ -1849,22 +1882,25 @@ function MessageComposer({
           <button
             aria-pressed={activeMarks.code}
             className={`composer-tool ${activeMarks.code ? 'composer-tool-active' : ''}`}
+            disabled={isInCodeBlock}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               toggleInlineCode(editorRef.current, syncEditorDraft);
               setActiveMarks(getActiveEditorCommands());
             }}
             aria-label="Inline code"
-            title="Inline code"
+            title={isInCodeBlock ? 'Inline code is unavailable in a code block' : 'Inline code'}
             type="button"
           >
             <Code size={16} />
           </button>
           <button
-            className="composer-tool"
+            aria-pressed={activeMarks.codeBlock}
+            className={`composer-tool ${activeMarks.codeBlock ? 'composer-tool-active' : ''}`}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
-              insertCodeBlock(editorRef.current, syncEditorDraft);
+              toggleCodeBlock(editorRef.current, syncEditorDraft);
+              setActiveMarks(getActiveEditorCommands());
             }}
             aria-label="Code block"
             title="Code block"
@@ -1879,10 +1915,11 @@ function MessageComposer({
             ref={linkButtonRef}
             aria-expanded={isLinkPopoverOpen}
             className={`composer-tool ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}
+            disabled={isInCodeBlock}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openLinkPopover}
             aria-label="Insert link"
-            title="Insert link"
+            title={isInCodeBlock ? 'Links are unavailable in a code block' : 'Insert link'}
             type="button"
           >
             <Link size={16} />
@@ -1892,10 +1929,11 @@ function MessageComposer({
             aria-controls={EMOJI_PICKER_ID}
             aria-expanded={isEmojiPopoverOpen}
             className={`composer-tool ${isEmojiPopoverOpen ? 'composer-tool-active' : ''}`}
+            disabled={isInCodeBlock}
             onMouseDown={(event) => event.preventDefault()}
             onClick={openEmojiPopover}
             aria-label="Insert emoji"
-            title="Insert emoji"
+            title={isInCodeBlock ? 'Emoji are unavailable in a code block' : 'Insert emoji'}
             type="button"
           >
             <Smile size={16} />

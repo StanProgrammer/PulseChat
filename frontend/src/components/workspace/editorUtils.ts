@@ -7,12 +7,16 @@ export type TextFormatCommand =
   | 'strikeThrough'
   | 'insertUnorderedList'
   | 'insertOrderedList'
-  | 'code';
+  | 'code'
+  | 'codeBlock';
 
 export function toggleEditorCommand(editor: HTMLDivElement | null, command: TextFormatCommand, onChange: () => void) {
   if (!editor) {
     return;
   }
+
+  // Don't apply text formatting inside a code block
+  if (isSelectionInCodeBlock() && command !== 'codeBlock') return;
 
   editor.focus();
   document.execCommand(command);
@@ -54,6 +58,25 @@ export function insertTextAtSavedSelection(
 }
 
 export function getActiveEditorCommands(): Record<TextFormatCommand, boolean> {
+  const inCodeBlock = isSelectionInCodeBlock();
+
+  // Inside a code block, suppress all other formatting — code blocks are
+  // self-contained monospace regions (like Slack) where bold/italic/lists
+  // don't apply. This also avoids browser quirks where queryCommandState
+  // can return true inside <pre> elements.
+  if (inCodeBlock) {
+    return {
+      bold: false,
+      italic: false,
+      underline: false,
+      strikeThrough: false,
+      insertUnorderedList: false,
+      insertOrderedList: false,
+      code: false,
+      codeBlock: true
+    };
+  }
+
   return {
     bold: document.queryCommandState('bold'),
     italic: document.queryCommandState('italic'),
@@ -61,7 +84,8 @@ export function getActiveEditorCommands(): Record<TextFormatCommand, boolean> {
     strikeThrough: document.queryCommandState('strikeThrough'),
     insertUnorderedList: document.queryCommandState('insertUnorderedList'),
     insertOrderedList: document.queryCommandState('insertOrderedList'),
-    code: isSelectionInCode()
+    code: isSelectionInCode(),
+    codeBlock: false
   };
 }
 
@@ -76,6 +100,8 @@ function isSelectionInCode(): boolean {
   }
 
   while (node) {
+    // Stop at <pre> first — <code> inside a <pre> is a code block, not inline code
+    if (node.nodeName === 'PRE') return false;
     if (node.nodeName === 'CODE') return true;
     // Stop at the editor boundary (contentEditable root)
     if (node instanceof HTMLElement && node.contentEditable === 'true') return false;
@@ -85,8 +111,30 @@ function isSelectionInCode(): boolean {
   return false;
 }
 
+/** Returns true when the selection is inside a <pre><code> code block. */
+function isSelectionInCodeBlock(): boolean {
+  const selection = window.getSelection();
+  if (!selection || !selection.rangeCount) return false;
+
+  let node: Node | null = selection.getRangeAt(0).commonAncestorContainer;
+  while (node && node.nodeType === Node.TEXT_NODE) {
+    node = node.parentNode;
+  }
+
+  while (node) {
+    if (node.nodeName === 'PRE') return true;
+    if (node instanceof HTMLElement && node.contentEditable === 'true') return false;
+    node = node.parentNode;
+  }
+
+  return false;
+}
+
 export function toggleInlineCode(editor: HTMLDivElement | null, onChange: () => void) {
   if (!editor) return;
+
+  // Don't apply inline code inside a code block
+  if (isSelectionInCodeBlock()) return;
 
   editor.focus();
 
@@ -177,7 +225,15 @@ function normaliseTextNodes(parent: Node) {
   }
 }
 
-export function insertCodeBlock(editor: HTMLDivElement | null, onChange: () => void) {
+/**
+ * Toggles a <pre><code> block at the cursor or over the selection.
+ *
+ * - If the cursor is already inside a <pre>, removes the code block and
+ *   converts the content back to a normal paragraph.
+ * - If text is selected, wraps it in <pre><code>.
+ * - If nothing is selected, inserts an empty <pre><code> block.
+ */
+export function toggleCodeBlock(editor: HTMLDivElement | null, onChange: () => void) {
   if (!editor) return;
 
   editor.focus();
@@ -187,20 +243,70 @@ export function insertCodeBlock(editor: HTMLDivElement | null, onChange: () => v
 
   const range = selection.getRangeAt(0);
 
-  // Create <pre><code><br></code></pre> — the <br> ensures the empty
-  // code element has visible height for cursor placement.
+  // Walk up from the cursor to find if we're inside a <pre> code block
+  let node: Node | null = range.commonAncestorContainer;
+  while (node && node.nodeType === Node.TEXT_NODE) {
+    node = node.parentNode;
+  }
+
+  let preElement: HTMLElement | null = null;
+  let search: Node | null = node;
+  while (search && search !== editor) {
+    if (search.nodeName === 'PRE') {
+      preElement = search as HTMLElement;
+      break;
+    }
+    search = search.parentNode;
+  }
+
+  // ── Toggle OFF: inside a code block → unwrap back to normal text ──
+  if (preElement) {
+    const content = preElement.textContent || '';
+    const p = document.createElement('p');
+    p.textContent = content;
+
+    const parent = preElement.parentNode;
+    if (parent) {
+      parent.replaceChild(p, preElement);
+
+      // Place cursor at the end of the paragraph
+      const newRange = document.createRange();
+      newRange.setStart(p, 0);
+      newRange.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(newRange);
+    }
+
+    onChange();
+    return;
+  }
+
+  // ── Toggle ON: create a new code block ──
+  const selectedText = selection.toString();
+
   const pre = document.createElement('pre');
   const code = document.createElement('code');
-  const br = document.createElement('br');
-  code.appendChild(br);
-  pre.appendChild(code);
 
+  if (selectedText) {
+    // If there's selected text, capture it
+    code.textContent = selectedText;
+  } else {
+    // Empty code block — the <br> ensures visible height
+    code.appendChild(document.createElement('br'));
+  }
+
+  pre.appendChild(code);
   range.deleteContents();
   range.insertNode(pre);
 
-  // Place cursor at the start of the code element, BEFORE the <br>,
-  // so typing begins on the first line.
-  range.setStart(code, 0);
+  // Place cursor inside the code element
+  if (selectedText) {
+    // Move cursor to end of the code block
+    range.setStartAfter(code);
+  } else {
+    // Place cursor at start of the empty code block
+    range.setStart(code, 0);
+  }
   range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);

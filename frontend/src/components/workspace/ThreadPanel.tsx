@@ -31,6 +31,7 @@ import {
   findClosestLink,
   getActiveEditorCommands,
   insertTextAtSavedSelection,
+  toggleCodeBlock,
   toggleEditorCommand,
   toggleInlineCode,
   type TextFormatCommand
@@ -107,12 +108,13 @@ function ThreadPanel({
   const [mentionCursorRect, setMentionCursorRect] = useState<DOMRect | null>(null);
   const [activeMarks, setActiveMarks] = useState<Record<TextFormatCommand, boolean>>({
     bold: false, italic: false, underline: false, strikeThrough: false,
-    insertUnorderedList: false, insertOrderedList: false, code: false
+    insertUnorderedList: false, insertOrderedList: false, code: false, codeBlock: false
   });
   const [isLinkPopoverOpen, setIsLinkPopoverOpen] = useState(false);
   const [isEmojiPopoverOpen, setIsEmojiPopoverOpen] = useState(false);
   const [linkDraft, setLinkDraft] = useState({ text: '', url: '', error: '' });
   const [recentEmojis, setRecentEmojis] = useState<RecentEmoji[]>(() => loadRecentEmojis());
+  const isInCodeBlock = activeMarks.codeBlock;
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState('');
   const [replyDeleteConfirmId, setReplyDeleteConfirmId] = useState<string | null>(null);
@@ -449,6 +451,7 @@ function ThreadPanel({
   };
 
   const openLinkPopover = () => {
+    if (isInCodeBlock) return;
     const editor = editorRef.current;
     const selection = window.getSelection();
     if (!editor) return;
@@ -520,6 +523,7 @@ function ThreadPanel({
   };
 
   const openEmojiPopover = () => {
+    if (isInCodeBlock) return;
     const editor = editorRef.current;
     if (!editor) return;
     setIsLinkPopoverOpen(false);
@@ -760,6 +764,7 @@ function ThreadPanel({
                   <button
                     aria-pressed={activeMarks[option.command]}
                     className={`composer-tool ${activeMarks[option.command] ? 'composer-tool-active' : ''}`}
+                    disabled={isInCodeBlock}
                     key={option.title}
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => {
@@ -767,7 +772,7 @@ function ThreadPanel({
                       setActiveMarks(getActiveEditorCommands());
                     }}
                     aria-label={option.title}
-                    title={option.title}
+                    title={isInCodeBlock ? `${option.title} is unavailable in a code block` : option.title}
                     type="button"
                   >
                     <Icon size={16} />
@@ -778,39 +783,27 @@ function ThreadPanel({
               <button
                 aria-pressed={activeMarks.code}
                 className={`composer-tool ${activeMarks.code ? 'composer-tool-active' : ''}`}
+                disabled={isInCodeBlock}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   toggleInlineCode(editorRef.current, () => {});
                   setActiveMarks(getActiveEditorCommands());
                 }}
                 aria-label="Inline code"
-                title="Inline code"
+                title={isInCodeBlock ? 'Inline code is unavailable in a code block' : 'Inline code'}
                 type="button"
               >
                 <Code size={16} />
               </button>
               <button
-                className="composer-tool"
+                aria-pressed={activeMarks.codeBlock}
+                className={`composer-tool ${activeMarks.codeBlock ? 'composer-tool-active' : ''}`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
-                  const editor = editorRef.current;
-                  if (!editor) return;
-                  editor.focus();
-                  const selection = window.getSelection();
-                  if (!selection || !selection.rangeCount) return;
-                  const range = selection.getRangeAt(0);
-                  const pre = document.createElement('pre');
-                  const code = document.createElement('code');
-                  const br = document.createElement('br');
-                  code.appendChild(br);
-                  pre.appendChild(code);
-                  range.deleteContents();
-                  range.insertNode(pre);
-                  range.setStart(code, 0);
-                  range.collapse(true);
-                  selection.removeAllRanges();
-                  selection.addRange(range);
-                  handleEditorInput();
+                  toggleCodeBlock(editorRef.current, () => {
+                    handleEditorInput();
+                  });
+                  setActiveMarks(getActiveEditorCommands());
                 }}
                 aria-label="Code block"
                 title="Code block"
@@ -823,10 +816,11 @@ function ThreadPanel({
                 ref={linkButtonRef}
                 aria-expanded={isLinkPopoverOpen}
                 className={`composer-tool ${isLinkPopoverOpen ? 'composer-tool-active' : ''}`}
+                disabled={isInCodeBlock}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={openLinkPopover}
                 aria-label="Insert link"
-                title="Insert link"
+                title={isInCodeBlock ? 'Links are unavailable in a code block' : 'Insert link'}
                 type="button"
               >
                 <Link size={16} />
@@ -836,10 +830,11 @@ function ThreadPanel({
                 aria-controls={EMOJI_PICKER_ID}
                 aria-expanded={isEmojiPopoverOpen}
                 className={`composer-tool ${isEmojiPopoverOpen ? 'composer-tool-active' : ''}`}
+                disabled={isInCodeBlock}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={openEmojiPopover}
                 aria-label="Insert emoji"
-                title="Insert emoji"
+                title={isInCodeBlock ? 'Emoji are unavailable in a code block' : 'Insert emoji'}
                 type="button"
               >
                 <Smile size={16} />
