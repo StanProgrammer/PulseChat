@@ -1,14 +1,10 @@
 import type { MutableRefObject } from 'react';
 import { escapeHtml } from './messageUtils';
 
-/**
- * Types of mentions supported (future-proof for channels and special mentions).
- */
+/** Supported mention types. */
 export type MentionType = 'user' | 'channel' | 'special';
 
-/**
- * Represents a parsed mention within the editor.
- */
+/** Parsed mention within the editor. */
 export type MentionMatch = {
   /** Full match including the @ symbol, e.g. "@john" */
   fullMatch: string;
@@ -24,9 +20,7 @@ export type MentionMatch = {
   type: MentionType;
 };
 
-/**
- * Information about a selected mention to insert.
- */
+/** Selected mention to insert. */
 export type MentionSelection = {
   userId: string;
   userName: string;
@@ -43,9 +37,7 @@ export function normalizeMentionQuery(query: string): string {
     .trim();
 }
 
-/** Return a viewport-relative caret rectangle for a collapsed editor selection.
- * Some browsers return an empty bounding box at line boundaries, so a
- * zero-width marker is used as a final, short-lived measurement fallback. */
+/** Viewport-relative caret rect. Falls back to a zero-width marker measurement. */
 export function getCaretViewportRect(editor: HTMLDivElement): DOMRect | null {
   const selection = window.getSelection();
   if (!selection?.rangeCount) return null;
@@ -78,31 +70,22 @@ export function getCaretViewportRect(editor: HTMLDivElement): DOMRect | null {
   return markerRect.height > 0 ? markerRect : null;
 }
 
-/**
- * Create the HTML for a mention span.
- */
+/** Create mention span HTML. */
 export function createMentionHtml(mention: MentionSelection): string {
   const displayName = escapeHtml(mention.userName);
   const userId = escapeHtml(mention.userId);
 
   let dataAttrs = `data-type="mention" data-user-id="${userId}" data-user-name="${displayName}"`;
-  // future: add data-channel-id for channel mentions, data-mention-type for special mentions
-
   return `<span ${dataAttrs} contenteditable="false">@${displayName}</span>`;
 }
 
-/**
- * Detect a mention pattern at the cursor position in a contentEditable.
- *
- * Looks backwards from the cursor to find a text node with an `@` symbol
- * preceded by whitespace or the start of the node.
- */
+/** Detect @mention at cursor by walking backwards from the caret. */
 export function detectMentionAtCursor(editor: HTMLDivElement): MentionMatch | null {
   const selection = window.getSelection();
   if (!selection || !selection.rangeCount) return null;
 
   const range = selection.getRangeAt(0);
-  if (!range.collapsed) return null; // Only trigger on collapsed cursor
+  if (!range.collapsed) return null;
 
   const { startContainer, startOffset } = range;
 
@@ -150,9 +133,7 @@ export function detectMentionAtCursor(editor: HTMLDivElement): MentionMatch | nu
   };
 }
 
-/**
- * Check if a node is inside a <code> or <pre> element.
- */
+/** Check if node is inside <code> or <pre>. */
 function isInsideCodeElement(node: Node, editor: HTMLDivElement): boolean {
   let current: Node | null = node;
   while (current && current !== editor) {
@@ -168,11 +149,7 @@ function isInsideCodeElement(node: Node, editor: HTMLDivElement): boolean {
   return false;
 }
 
-/**
- * Replace the @mention text in the editor with the mention span.
- *
- * Selects the exact range of `@query` and replaces it with the mention element.
- */
+/** Replace @mention text with mention span. */
 export function insertMentionAtCursor(
   editor: HTMLDivElement,
   mention: MentionMatch,
@@ -190,15 +167,15 @@ export function insertMentionAtCursor(
   sel.removeAllRanges();
   sel.addRange(range);
 
-  // Create a temporary container to parse the HTML
+  // Temp container to parse HTML
   const temp = document.createElement('div');
   temp.innerHTML = createMentionHtml(selection);
 
   const mentionElement = temp.firstChild;
   if (!mentionElement) return;
 
-  // Delete the selected text and insert the mention element
   range.deleteContents();
+  
   range.insertNode(mentionElement);
 
   // Add a space after the mention so the user can continue typing
@@ -215,9 +192,7 @@ export function insertMentionAtCursor(
   sel.addRange(nextRange);
 }
 
-/**
- * Parse all mention spans from HTML content.
- */
+/** Parse mention spans from HTML. */
 export function parseMentionsFromHtml(html: string): MentionSelection[] {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
@@ -232,7 +207,7 @@ export function parseMentionsFromHtml(html: string): MentionSelection[] {
     }
   });
 
-  // Deduplicate by userId
+  // Dedupe by userId
   const seen = new Set<string>();
   return mentions.filter((m) => {
     if (seen.has(m.userId)) return false;
@@ -241,10 +216,7 @@ export function parseMentionsFromHtml(html: string): MentionSelection[] {
   });
 }
 
-/**
- * Get the plain text representation of content with mentions,
- * replacing mention spans with @username for search indexing.
- */
+/** Replace mention spans with @username for plain text. */
 export function mentionsToPlainText(html: string): string {
   return html.replace(
     /<span[^>]*data-type="mention"[^>]*data-user-name="([^"]*)"[^>]*>.*?<\/span>/g,

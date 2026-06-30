@@ -60,7 +60,7 @@ export class MessagingService {
     const trimmedQuery = query.trim();
 
     if (!trimmedQuery) {
-      // Return all workspace users (excluding self)
+      // All workspace users except self
       const users = await this.prisma.user.findMany({
         where: {
           id: { not: currentUser.id },
@@ -88,9 +88,7 @@ export class MessagingService {
     return { users };
   }
 
-  /**
-   * Search workspace users for @mentions, optionally scoped to a conversation's members.
-   */
+  /** Search workspace users for @mentions, optionally scoped to a conversation. */
   async searchMentionableUsers(currentUserId: string, query: string, conversationId?: string) {
     const currentUser = await this.getCurrentUser(currentUserId);
     const trimmedQuery = normalizeMentionSearchQuery(query);
@@ -101,13 +99,12 @@ export class MessagingService {
       workspaceName: currentUser.workspaceName
     };
 
-    // If scoped to a conversation, only include members of that conversation
+    // Scope to conversation members
     if (conversationId) {
       const memberIds = await this.getConversationMemberIds(currentUserId, conversationId);
       baseWhere.id = { not: currentUser.id, in: memberIds };
     }
 
-    // Add name filter if there's a query
     if (trimmedQuery) {
       baseWhere.OR = [
         { name: { contains: trimmedQuery, mode: 'insensitive' } },
@@ -374,13 +371,13 @@ export class MessagingService {
       }
     });
 
-    // Update conversation timestamp
+    // Bump conversation timestamp
     await this.prisma.conversation.update({
       where: { id: message.conversationId },
       data: { updatedAt: new Date() }
     });
 
-    // Auto-mark as read by the sender
+    // Auto-mark as read by sender
     await this.prisma.threadReplyRead.upsert({
       where: {
         userId_messageId: {
@@ -454,7 +451,6 @@ export class MessagingService {
   async getThreadReplyCountsForConversation(currentUserId: string, conversationId: string) {
     await this.ensureConversationMember(currentUserId, conversationId);
 
-    // Get all messages in this conversation
     const messages = await this.prisma.message.findMany({
       where: { conversationId },
       select: { id: true }
@@ -466,7 +462,6 @@ export class MessagingService {
       return { replyCounts: {} };
     }
 
-    // Get reply counts grouped by message
     const groups = await this.prisma.threadReply.groupBy({
       by: ['messageId'],
       where: {
@@ -519,7 +514,6 @@ export class MessagingService {
       where.conversationId = conversationId;
     }
 
-    // Get all read records for this user
     const reads = await this.prisma.threadReplyRead.findMany({
       where: { userId: currentUserId },
       select: { messageId: true, lastReadAt: true }
@@ -527,7 +521,7 @@ export class MessagingService {
 
     const readMap = new Map(reads.map((r) => [r.messageId, r.lastReadAt]));
 
-    // Get all thread replies grouped by message, finding the latest per message
+    // Find latest reply per message
     const replies = await this.prisma.threadReply.groupBy({
       by: ['messageId'],
       where,
@@ -540,7 +534,6 @@ export class MessagingService {
     for (const group of replies) {
       const lastRead = readMap.get(group.messageId);
       if (!lastRead || (group._max.createdAt && group._max.createdAt > lastRead)) {
-        // Count how many replies are unread
         if (lastRead) {
           const unreadCount = await this.prisma.threadReply.count({
             where: {
@@ -552,7 +545,6 @@ export class MessagingService {
             unreadCounts[group.messageId] = unreadCount;
           }
         } else {
-          // Never read - all replies are unread
           unreadCounts[group.messageId] = group._count.id;
         }
       }

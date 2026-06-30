@@ -152,12 +152,10 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [threadMessage, setThreadMessage] = useState<RealtimeMessage | null>(null);
-  // Track thread reply counts per message (keyed by message ID)
   const [threadReplyCounts, setThreadReplyCounts] = useState<Record<string, number>>({});
-  // Track unread thread replies per message
   const [threadUnreadCounts, setThreadUnreadCounts] = useState<Record<string, number>>({});
 
-  // Load thread reply counts and unread counts on conversation mount
+  // Load thread counts on conversation mount
   useEffect(() => {
     if (!accessToken) return;
     const convId = activeConversation?.id;
@@ -176,7 +174,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     });
   }, [accessToken, activeConversation?.id]);
 
-  // Listen for unread thread updates via socket
+  // Socket: unread thread updates
   useEffect(() => {
     if (!socketRef.current) return;
     const socket = socketRef.current;
@@ -191,7 +189,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     };
   }, [socketRef]);
 
-  // Listen for new thread replies to update reply counts
+  // Socket: new thread replies
   useEffect(() => {
     if (!socketRef.current) return;
     const socket = socketRef.current;
@@ -209,7 +207,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     };
   }, [socketRef]);
 
-  // Listen for thread reply deletions to update reply counts
+  // Socket: thread reply deletions
   useEffect(() => {
     if (!socketRef.current) return;
     const socket = socketRef.current;
@@ -227,7 +225,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     };
   }, [socketRef]);
 
-  // Function to update reply count from ThreadPanel
+  // Update reply count from ThreadPanel
   const handleReplyCountChange = useCallback((messageId: string, newCount: number) => {
     setThreadReplyCounts((current) => ({
       ...current,
@@ -235,7 +233,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     }));
   }, []);
 
-  // Function to update unread count from ThreadPanel
+  // Update unread count from ThreadPanel
   const handleUnreadCountChange = useCallback((messageId: string, unreadCount: number) => {
     setThreadUnreadCounts((current) => {
       if (unreadCount === 0) {
@@ -247,7 +245,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     });
   }, []);
 
-  // Auto-close sidebar when resizing from desktop to tablet/mobile
+  // Close sidebar when resizing to mobile
   useEffect(() => {
     if (isSidebarOpen && !isDesktop) {
       setIsSidebarOpen(false);
@@ -317,7 +315,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     setPendingFiles((current) => [...current, ...newFiles].slice(0, 10));
   }, []);
 
-  // Clear pending files when switching conversations
+  // Clear pending files on conversation switch
   useEffect(() => {
     if (pendingFiles.length > 0) {
       pendingFiles.forEach((f) => {
@@ -439,7 +437,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
         />
 
         <section className="flex h-dvh min-w-0 flex-col overflow-hidden">
-          {/* ── Compact header ── */}
+          {/* Header */}
           <header className="workspace-header z-20 border-b border-[#d9dee4] bg-white/86 backdrop-blur-xl">
             <div className="flex min-h-[52px] items-center justify-between gap-3 px-4 py-2 sm:px-6">
               <div className="flex min-w-0 items-center gap-2">
@@ -472,7 +470,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
             </div>
           </header>
 
-          {/* ── Message area ── */}
+          {/* Message area */}
           <div className="chat-main flex-1 min-h-0 overflow-hidden">
             <div className="flex h-full min-h-0 flex-col px-3 pt-3 pb-0 sm:px-6 sm:pt-5">
               {error && <p className="dm-error mb-3">{error}</p>}
@@ -514,7 +512,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
             </div>
           </div>
 
-          {/* ── Composer (outside the conversation panel) ── */}
+          {/* Composer */}
           {activeParticipant && (
             <div className="flex-shrink-0 px-3 pb-3 pt-2 sm:px-6">
               <MessageComposer
@@ -537,7 +535,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
           )}
         </section>
 
-        {/* ── Thread panel (when a thread is open) ── */}
+        {/* Thread panel */}
         {threadMessage && (
           <ThreadPanel
             accessToken={accessToken}
@@ -557,7 +555,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
   );
 }
 
-/* ─── Message stream (conversation messages only) ─── */
+/* Message stream */
 
 const EDIT_TEXT_FORMATS = [
   { icon: Bold, title: 'Bold', command: 'bold' },
@@ -648,12 +646,7 @@ function MessageStream({
     }
   }, [messages, scrollToBottom, user.id]);
 
-  // Set editor innerHTML directly on the DOM when entering edit mode.
-  // We intentionally avoid dangerouslySetInnerHTML here because React
-  // would re-apply the original content on every re-render (e.g. when
-  // formatting marks update, mention dropdown opens, etc.), which resets
-  // the cursor position and wipes out the user's edits.
-  // Instead, we set innerHTML once via the DOM ref in a useEffect.
+  // Set innerHTML via DOM ref to avoid React re-render resetting cursor
   useEffect(() => {
     if (editingMessageId && editInitialContent && editEditorRef.current) {
       editEditorRef.current.innerHTML = editInitialContent;
@@ -664,9 +657,7 @@ function MessageStream({
     }
   }, [editingMessageId, editInitialContent]);
 
-  // Focus the edit editor when entering edit mode (must run AFTER content
-  // is set, so both effects depend on editingMessageId — React runs them
-  // in definition order).
+  // Focus editor after content is set
   useEffect(() => {
     if (editingMessageId && editEditorRef.current && editEditorInitializedRef.current) {
       editEditorRef.current.focus();
@@ -681,8 +672,7 @@ function MessageStream({
     }
   }, [editingMessageId]);
 
-  // Track formatting marks for edit editor — uses getActiveEditorCommands()
-  // which properly handles code block suppression and browser quirks.
+  // Track formatting marks in edit editor
   useEffect(() => {
     if (!editingMessageId) return;
     const updateMarks = () => {
@@ -702,7 +692,7 @@ function MessageStream({
     return () => document.removeEventListener('selectionchange', updateMarks);
   }, [editingMessageId]);
 
-  // Close kebab menu on outside click and scroll
+  // Close kebab menu on outside click / scroll
   useEffect(() => {
     if (!openMenuMessageId) return;
     const handleClick = (event: MouseEvent) => {
@@ -714,8 +704,7 @@ function MessageStream({
     };
     document.addEventListener('mousedown', handleClick);
 
-    // Close kebab menu when the conversation stream scrolls so the
-    // fixed-position menu doesn't visually detach from its message.
+    // Close menu on stream scroll to prevent visual detachment
     const scrollEl = document.querySelector('.conversation-stream');
     const handleScroll = () => {
       setOpenMenuMessageId(null);
@@ -733,7 +722,7 @@ function MessageStream({
     };
   }, [openMenuMessageId]);
 
-  // Close delete confirm on Escape
+  // Escape closes delete confirm
   useEffect(() => {
     if (!deleteConfirmId) return;
     const handleKey = (event: globalThis.KeyboardEvent) => {
@@ -869,11 +858,7 @@ function MessageStream({
   const isEditUnchanged = (originalContent: string) => {
     const editor = editEditorRef.current;
     if (!editor) return true;
-    // Both sides must use the same preparation to account for
-    // contenteditable attribute differences on mention spans.
-    // prepareContentForEditing strips contenteditable="false" from
-    // mentions, matching what the editor DOM produces after the user
-    // interacts with it.
+    // Normalize contenteditable attrs on mention spans for fair comparison
     const preparedOriginal = prepareContentForEditing(originalContent);
     return sanitizeMessageHtml(editor.innerHTML) === sanitizeMessageHtml(preparedOriginal);
   };

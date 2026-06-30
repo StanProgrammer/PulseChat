@@ -137,12 +137,7 @@ export function escapeHtml(content: string) {
     .replace(/'/g, '&#039;');
 }
 
-/**
- * Prepare message content for the edit editor:
- * - Removes `contenteditable="false"` from mention spans
- *   so the browser treats them as regular editable inline elements.
- *   This prevents cursor jumps and broken selection behavior.
- */
+/** Strip contenteditable="false" from mention spans for editing. */
 export function prepareContentForEditing(content: string): string {
   const div = document.createElement('div');
   div.innerHTML = content;

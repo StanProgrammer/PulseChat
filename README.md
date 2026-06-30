@@ -143,11 +143,3 @@ Use the example files as a starting point for local configuration:
 - `docker-compose.yml`
 
 Local `.env` files are included for development and are ignored by git. Replace all JWT secrets before production deployment.
-
-## Next Steps
-
-- Add production-grade password reset and email verification
-- Add route handling for authenticated chat pages
-- Build workspace, channel, and direct message screens
-- Add Socket.IO real-time messaging
-- Persist workspaces, channels, memberships, and messages with Prisma/PostgreSQL

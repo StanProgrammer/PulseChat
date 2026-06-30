@@ -232,7 +232,7 @@ export function useDirectMessaging(accessToken: string, user: User) {
       return;
     }
 
-    // Optimistically update the message in place
+    // Optimistic update
     setMessages((current) =>
       current.map((msg) =>
         msg.id === messageId
@@ -258,7 +258,7 @@ export function useDirectMessaging(accessToken: string, user: User) {
       return;
     }
 
-    // Stash the message for rollback, then optimistically remove
+    // Stash for rollback, then optimistically remove
     let stashedMessage: RealtimeMessage | null = null;
     setMessages((current) => {
       const msg = current.find((m) => m.id === messageId);
@@ -268,10 +268,9 @@ export function useDirectMessaging(accessToken: string, user: User) {
 
     socket.emit('message:delete', { messageId }, (response) => {
       if (!response?.ok) {
-        // Rollback: restore the message
         if (stashedMessage) {
           setMessages((current) => {
-            // Only restore if not already re-added by socket event
+            // Avoid re-adding if socket event already restored it
             if (current.some((m) => m.id === messageId)) return current;
             return [...current, stashedMessage!].sort(
               (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()

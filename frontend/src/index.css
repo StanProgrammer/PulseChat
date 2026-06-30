@@ -351,7 +351,7 @@ button:focus-visible {
   to { opacity: 1; }
 }
 
-/* ── File preview chips (compact horizontal strip before sending) ── */
+/* ── File preview chips ── */
 
 .fpc-strip {
   display: flex;
@@ -953,7 +953,7 @@ button:focus-visible {
   box-shadow: inset 0 0 0 1px rgb(97 31 105 / 0.14);
 }
 
-/* Pressed (momentary click feedback) */
+/* Pressed state */
 .composer-tool:active:not(:disabled) {
   transform: scale(0.96);
 }
@@ -962,7 +962,7 @@ button:focus-visible {
   background: rgb(97 31 105 / 0.22);
 }
 
-/* Disabled — very light, clearly non-interactive */
+/* Disabled state */
 .composer-toolbar .composer-tool:disabled,
 .message-edit-toolbar .composer-tool:disabled {
   border-color: transparent;
@@ -1777,8 +1777,6 @@ button:focus-visible {
 .mention-dropdown {
   min-width: 14rem;
   max-width: 20rem;
-  max-height: 18rem;
-  overflow-y: auto;
   border: 1px solid #d9dee4;
   border-radius: 0.7rem;
   background: #ffffff;
@@ -1786,14 +1784,16 @@ button:focus-visible {
     0 18px 40px rgb(23 25 28 / 0.2),
     0 4px 12px rgb(23 25 28 / 0.08);
   padding: 0.35rem;
+  padding-bottom: 0;
   pointer-events: auto;
   animation: mention-in 120ms ease both;
+  display: flex;
+  flex-direction: column;
 }
 
 .mention-dropdown-fixed {
   position: fixed;
   z-index: 100;
-  max-height: 18rem;
   transform-origin: top left;
 }
 
@@ -1803,7 +1803,44 @@ button:focus-visible {
   max-width: calc(100vw - 1rem);
 }
 
-/* Visual connector triangle pointing toward the cursor */
+/* Scrollable results area */
+.mention-dropdown-results {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #c5cbd1 transparent;
+  padding: 0 0 0.25rem;
+  /* Reserve space for the connector triangle at the top */
+  margin-top: 0;
+}
+
+.mention-dropdown-results::-webkit-scrollbar {
+  width: 5px;
+}
+
+.mention-dropdown-results::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mention-dropdown-results::-webkit-scrollbar-thumb {
+  background: #c5cbd1;
+  border-radius: 999px;
+}
+
+.mention-dropdown-results::-webkit-scrollbar-thumb:hover {
+  background: #a8b1ba;
+}
+
+/* Hide scrollbar when not hovering */
+.mention-dropdown-results:not(:hover) {
+  scrollbar-color: transparent transparent;
+}
+
+.mention-dropdown-results:not(:hover)::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+/* Connector triangle */
 .mention-dropdown-connector {
   position: absolute;
   top: -5px;
@@ -1825,8 +1862,7 @@ button:focus-visible {
   border-radius: 0 0 2px 0;
 }
 
-/* When the dropdown is placed above the cursor, flip the connector to
-   point downward from the bottom edge of the dropdown. */
+/* Flip connector when placed above cursor */
 .mention-dropdown-above .mention-dropdown-connector {
   top: auto;
   bottom: -5px;
@@ -3273,9 +3309,9 @@ button:focus-visible {
   user-select: none;
 }
 
-/* ── Kebab menu (three-dot actions) ── */
+/* ── Kebab menu ── */
 
-/* ── Message actions group (thread + kebab) ── */
+/* ── Message actions ── */
 
 .message-actions-group {
   display: flex;
@@ -3335,7 +3371,7 @@ button:focus-visible {
   color: #4a154b;
 }
 
-/* ── Thread reply count indicator (always visible below messages) ── */
+/* ── Reply count indicator ── */
 
 .message-thread-reply-count {
   display: inline-flex;
@@ -3567,10 +3603,7 @@ button:focus-visible {
   color: #343940;
 }
 
-/* Lock message card hover appearance while the kebab menu is open,
-   so moving the cursor from the trigger to the menu doesn't
-   un-highlight the card (the menu is portaled to body, so the
-   card's :hover would otherwise stop matching). */
+/* Keep card highlighted when cursor moves from trigger to portaled menu */
 .message-card-menu-open {
   background: #f7f8fa;
 }
@@ -3592,8 +3625,7 @@ button:focus-visible {
   transform-origin: top right;
 }
 
-/* When the menu is aligned to the card's left edge (near screen right edge),
-   adjust the transform origin so the animation expands toward the trigger. */
+/* Shift transform origin when aligned to card's left edge */
 .message-kebab-menu-left {
   transform-origin: top left;
 }
@@ -3718,8 +3750,7 @@ button:focus-visible {
 }
 
 .message-edit-editor span[data-type="mention"] {
-  /* In edit mode, mentions are editable spans. Keep the visual hint
-     but use cursor: text so the user can click and edit naturally. */
+  /* Keep mention styles with text cursor for editability */
   display: inline;
   border-radius: 0.28rem;
   background: rgb(54 197 240 / 0.14);

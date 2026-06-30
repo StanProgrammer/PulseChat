@@ -15,7 +15,7 @@ export function toggleEditorCommand(editor: HTMLDivElement | null, command: Text
     return;
   }
 
-  // Don't apply text formatting inside a code block
+  // Skip text formatting inside code blocks
   if (isSelectionInCodeBlock() && command !== 'codeBlock') return;
 
   editor.focus();
@@ -60,10 +60,7 @@ export function insertTextAtSavedSelection(
 export function getActiveEditorCommands(): Record<TextFormatCommand, boolean> {
   const inCodeBlock = isSelectionInCodeBlock();
 
-  // Inside a code block, suppress all other formatting — code blocks are
-  // self-contained monospace regions (like Slack) where bold/italic/lists
-  // don't apply. This also avoids browser quirks where queryCommandState
-  // can return true inside <pre> elements.
+  // Code blocks are self-contained; suppress all formatting inside them
   if (inCodeBlock) {
     return {
       bold: false,
@@ -100,10 +97,10 @@ function isSelectionInCode(): boolean {
   }
 
   while (node) {
-    // Stop at <pre> first — <code> inside a <pre> is a code block, not inline code
+    // <pre> means code block, not inline code
     if (node.nodeName === 'PRE') return false;
     if (node.nodeName === 'CODE') return true;
-    // Stop at the editor boundary (contentEditable root)
+    // Stop at editor boundary
     if (node instanceof HTMLElement && node.contentEditable === 'true') return false;
     node = node.parentNode;
   }
@@ -213,7 +210,7 @@ export function toggleInlineCode(editor: HTMLDivElement | null, onChange: () => 
   onChange();
 }
 
-/** Remove consecutive text nodes that are empty or whitespace-only. */
+/** Remove empty/whitespace-only text nodes. */
 function normaliseTextNodes(parent: Node) {
   let child = parent.firstChild;
   while (child) {
@@ -225,14 +222,7 @@ function normaliseTextNodes(parent: Node) {
   }
 }
 
-/**
- * Toggles a <pre><code> block at the cursor or over the selection.
- *
- * - If the cursor is already inside a <pre>, removes the code block and
- *   converts the content back to a normal paragraph.
- * - If text is selected, wraps it in <pre><code>.
- * - If nothing is selected, inserts an empty <pre><code> block.
- */
+/** Toggle <pre><code> block: unwrap, wrap selection, or insert empty block. */
 export function toggleCodeBlock(editor: HTMLDivElement | null, onChange: () => void) {
   if (!editor) return;
 
@@ -259,7 +249,7 @@ export function toggleCodeBlock(editor: HTMLDivElement | null, onChange: () => v
     search = search.parentNode;
   }
 
-  // ── Toggle OFF: inside a code block → unwrap back to normal text ──
+  // Toggle OFF: unwrap code block to normal text
   if (preElement) {
     const content = preElement.textContent || '';
     const p = document.createElement('p');
@@ -281,17 +271,16 @@ export function toggleCodeBlock(editor: HTMLDivElement | null, onChange: () => v
     return;
   }
 
-  // ── Toggle ON: create a new code block ──
+  // Toggle ON: create code block
   const selectedText = selection.toString();
 
   const pre = document.createElement('pre');
   const code = document.createElement('code');
 
   if (selectedText) {
-    // If there's selected text, capture it
     code.textContent = selectedText;
   } else {
-    // Empty code block — the <br> ensures visible height
+    // <br> ensures visible height for empty block
     code.appendChild(document.createElement('br'));
   }
 
@@ -299,12 +288,9 @@ export function toggleCodeBlock(editor: HTMLDivElement | null, onChange: () => v
   range.deleteContents();
   range.insertNode(pre);
 
-  // Place cursor inside the code element
   if (selectedText) {
-    // Move cursor to end of the code block
     range.setStartAfter(code);
   } else {
-    // Place cursor at start of the empty code block
     range.setStart(code, 0);
   }
   range.collapse(true);

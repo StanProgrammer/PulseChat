@@ -60,17 +60,11 @@ type ThreadPanelProps = {
   accessToken: string;
   socketStatus: SocketStatus;
   onClose: () => void;
-  /** Number of current replies (0 = empty) */
   replyCount: number;
-  /** The socket instance for realtime communication */
   socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
-  /** Callback when a reply is sent (to update counts in the parent) */
   onReplyCountChange?: (messageId: string, newCount: number) => void;
-  /** Callback to update unread counts */
   onUnreadCountChange?: (messageId: string, unreadCount: number) => void;
-  /** Initial replies if already loaded */
   initialReplies?: ThreadReplyType[];
-  /** Whether this thread has already been marked as read */
   alreadyRead?: boolean;
 };
 
@@ -127,7 +121,7 @@ function ThreadPanel({
   const emojiButtonRef = useRef<HTMLButtonElement | null>(null);
   const repliesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Floating popover positioning (scroll-aware, flips to available space)
+  // Popover positioning (scroll-aware, flips to fit)
   const {
     style: linkPopoverStyle,
     popoverRef: linkPopoverRef
@@ -155,7 +149,7 @@ function ThreadPanel({
   mentionMatchRef.current = mentionMatch;
   const markedReadRef = useRef(alreadyRead);
 
-  // Load replies on mount if not provided
+  // Load replies on mount
   useEffect(() => {
     if (initialReplies.length === 0) {
       setIsLoadingReplies(true);
@@ -174,17 +168,16 @@ function ThreadPanel({
     }
   }, [parentMessage.id, accessToken, initialReplies.length]);
 
-  // Listen for new replies via socket (skip own — handled by callback)
+  // Socket: new replies (skip own — handled by callback)
   useEffect(() => {
     if (!socket) return;
 
     const handleNewReply = (payload: { reply: ThreadReplyType; replyCount: number }) => {
-      // Skip replies from current user to avoid duplicates with optimistic update
       if (payload.reply.sender.id === currentUserId) return;
 
       if (payload.reply.messageId === parentMessage.id) {
         setReplies((current) => {
-          // Avoid duplicates (e.g. from reconnection)
+          // Dedupe on reconnection
           if (current.some((r) => r.id === payload.reply.id)) return current;
           return [...current, payload.reply];
         });
@@ -197,7 +190,7 @@ function ThreadPanel({
     };
   }, [socket, parentMessage.id, currentUserId]);
 
-  // Listen for reply deletions
+  // Socket: reply deletions
   useEffect(() => {
     if (!socket) return;
 
@@ -213,7 +206,7 @@ function ThreadPanel({
     };
   }, [socket, parentMessage.id]);
 
-  // Close delete confirm on Escape
+  // Escape closes delete confirm
   useEffect(() => {
     if (!replyDeleteConfirmId) return;
     const handleKey = (event: globalThis.KeyboardEvent) => {
@@ -235,7 +228,7 @@ function ThreadPanel({
     });
   }, [socket, socketStatus, parentMessage.id, onUnreadCountChange]);
 
-  // Close thread panel on Escape key
+  // Escape closes thread panel
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -252,7 +245,7 @@ function ThreadPanel({
     repliesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [replies.length]);
 
-  // Track active formatting marks
+  // Track formatting marks
   useEffect(() => {
     const updateActiveMarks = () => {
       const editor = editorRef.current;
@@ -272,7 +265,7 @@ function ThreadPanel({
     setMentionMatch(null);
   }, []);
 
-  // Close popovers on outside click / Escape
+  // Close popovers on click outside / Escape
   useEffect(() => {
     if (!isLinkPopoverOpen && !isEmojiPopoverOpen && !mentionOpen) return;
 
@@ -380,8 +373,7 @@ function ThreadPanel({
     const clientReplyId = createClientMessageId();
     const timestamp = new Date().toISOString();
 
-    // Optimistic update
-    const optimisticReply: ThreadReplyType = {
+      const optimisticReply: ThreadReplyType = {
       id: clientReplyId,
       content,
       createdAt: timestamp,
@@ -420,11 +412,9 @@ function ThreadPanel({
       if (!response?.ok) {
         setReplies((current) => current.filter((r) => r.id !== clientReplyId));
         setSendError(response?.message || 'Unable to send reply.');
-        // Restore draft
         setDraftHtml(content);
         setDraftText(draftText);
       } else {
-        // Replace optimistic reply with real one
         setReplies((current) => {
           const existing = current.find((r) => r.id === clientReplyId);
           if (existing && response.replyId) {
@@ -432,13 +422,13 @@ function ThreadPanel({
               r.id === clientReplyId ? { ...r, id: response.replyId! } : r
             );
           }
-          // Optimistic was removed (e.g. by error handler), add real reply
+          // Optimistic removed — add real reply
           if (response.replyId) {
             return [...current, { ...optimisticReply, id: response.replyId as string }];
           }
           return current;
         });
-        // Count updated via Workspace socket listener — no local increment
+
       }
     });
   };
@@ -532,8 +522,6 @@ function ThreadPanel({
     }
     setIsEmojiPopoverOpen((current) => !current);
   };
-
-  /* ── Emoji functions ── */
 
   const insertEmoji = useCallback((emoji: string) => {
     const editor = editorRef.current;

@@ -190,10 +190,9 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const { reply } = await this.messagingService.sendThreadReply(user.sub, messageId, content);
 
-      // Get reply count for the message
       const { count } = await this.messagingService.getThreadReplyCount(messageId);
 
-      // Notify all members in the conversation room about the new reply
+      // Broadcast to conversation room
       this.server.to(this.conversationRoom(reply.conversationId)).emit('thread:reply:new', {
         reply,
         replyCount: count
@@ -241,7 +240,7 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       await this.messagingService.markThreadRead(user.sub, messageId);
 
-      // Broadcast updated unread counts to the user
+      // Emit unread counts to user
       const { unreadCounts } = await this.messagingService.getUnreadThreadReplies(user.sub);
       this.server.to(this.userRoom(user.sub)).emit('thread:unread:updated', { unreadCounts });
 

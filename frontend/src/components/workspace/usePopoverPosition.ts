@@ -8,39 +8,21 @@ export interface PopoverPosition {
 }
 
 export interface UsePopoverPositionOptions {
-  /** Whether the popover is currently open */
   isOpen: boolean;
-  /** Ref to the trigger button/element */
   triggerRef: React.RefObject<HTMLElement | null>;
-  /** Preferred placement — defaults to 'top' (like Slack) */
   preferredPlacement?: Placement;
-  /** Estimated/fixed popover width for initial placement decision */
   width: number;
-  /** Estimated/fixed popover height for initial placement decision */
   height: number;
-  /** Gap between trigger and popover in px */
   gap?: number;
 }
 
 export interface UsePopoverPositionReturn {
-  /** The style object to apply to the portaled popover */
   style: React.CSSProperties | undefined;
-  /** The actual resolved placement ('top' or 'bottom') */
   placement: Placement;
-  /** Ref to attach to the popover element — used for measuring actual height after mount */
   popoverRef: React.RefObject<HTMLDivElement | null>;
 }
 
-/**
- * A hook that computes fixed-position styles for floating popovers.
- *
- * Features:
- * - Defaults to showing **above** the trigger (like Slack), flips below if needed
- * - Re-positions on scroll and resize so the popover stays anchored
- * - Measures actual popover height after render for accurate placement
- * - Clamps within viewport bounds (8px margin)
- * - Returns both position and resolved placement for connector/arrow styling
- */
+/** Fixed-position popover style with scroll-aware repositioning and viewport clamping. */
 export function usePopoverPosition({
   isOpen,
   triggerRef,
@@ -60,7 +42,7 @@ export function usePopoverPosition({
 
     const triggerRect = trigger.getBoundingClientRect();
 
-    // Use the actual rendered height if available, otherwise fall back to estimate
+    // Use rendered height if available, else fall back to estimate
     const popoverEl = popoverRef.current;
     let height = estimatedHeight;
     if (popoverEl) {
@@ -85,18 +67,15 @@ export function usePopoverPosition({
     const tryTop = preferredPlacement === 'top';
     const tryBottom = preferredPlacement === 'bottom';
 
-    // Try preferred placement first, flip if insufficient space
+    // Try preferred, flip if insufficient space
     if (tryTop) {
       if (spaceAbove >= height) {
-        // Enough space above
         resolvedPlacement = 'top';
         top = triggerRect.top - gap - height;
       } else if (spaceBelow >= height) {
-        // Not enough above but enough below — flip
         resolvedPlacement = 'bottom';
         top = triggerRect.bottom + gap;
       } else if (spaceAbove >= spaceBelow) {
-        // Neither fits — choose the side with more space
         resolvedPlacement = 'top';
         top = Math.max(viewportMargin, triggerRect.top - gap - height);
       } else {
@@ -107,7 +86,6 @@ export function usePopoverPosition({
         );
       }
     } else {
-      // Preferred placement is bottom
       if (spaceBelow >= height) {
         resolvedPlacement = 'bottom';
         top = triggerRect.bottom + gap;
@@ -126,7 +104,7 @@ export function usePopoverPosition({
       }
     }
 
-    // Center horizontally on the trigger, clamped to viewport
+    // Center on trigger, clamped to viewport
     let left = Math.round(triggerRect.left + (triggerRect.width - width) / 2);
     left = Math.max(viewportMargin, Math.min(left, window.innerWidth - width - viewportMargin));
 
@@ -145,12 +123,11 @@ export function usePopoverPosition({
       compute();
     } else {
       setStyle(undefined);
-      // Reset the height ref so next open uses the initial estimate
-      actualHeightRef.current = estimatedHeight;
+        actualHeightRef.current = estimatedHeight;
     }
   }, [isOpen, compute, estimatedHeight]);
 
-  // After the popover element is in the DOM, re-measure for accurate height
+  // Re-measure after mount for accurate height
   useEffect(() => {
     if (!isOpen) return;
 
@@ -164,12 +141,12 @@ export function usePopoverPosition({
     }
   }, [isOpen, compute]);
 
-  // Recompute on scroll and resize while open, so the popover tracks the trigger
+  // Recompute on scroll/resize to keep popover anchored
   useEffect(() => {
     if (!isOpen) return;
 
     const handleChange = () => compute();
-    // Use capture phase to catch scroll events from any scrollable ancestor
+    // Capture phase catches scroll from any ancestor
     window.addEventListener('scroll', handleChange, { passive: true, capture: true });
     window.addEventListener('resize', handleChange, { passive: true });
 
