@@ -187,6 +187,16 @@ export function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+export function searchConversationMessages(accessToken: string, conversationId: string, query: string, signal?: AbortSignal) {
+  return apiRequest<{ messages: DirectMessage[]; totalCount: number }>(
+    `/messaging/conversations/${conversationId}/search?query=${encodeURIComponent(query)}`,
+    {
+      headers: authHeaders(accessToken),
+      signal
+    }
+  );
+}
+
 /* ── Thread replies ── */
 
 export function listThreadReplies(accessToken: string, messageId: string) {

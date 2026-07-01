@@ -110,6 +110,15 @@ export class MessagingController {
     return this.messagingService.getThreadReplyCount(messageId);
   }
 
+  @Get('conversations/:conversationId/search')
+  searchMessages(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('conversationId') conversationId: string,
+    @Query('query') query?: string
+  ) {
+    return this.messagingService.searchMessages(user.sub, conversationId, query || '');
+  }
+
   @Get('thread-reply-counts/:conversationId')
   getThreadReplyCounts(
     @CurrentUser() user: AuthenticatedUser,

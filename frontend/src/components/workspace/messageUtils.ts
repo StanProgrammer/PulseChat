@@ -149,6 +149,59 @@ export function prepareContentForEditing(content: string): string {
   return div.innerHTML;
 }
 
+/**
+ * Highlight search query matches in HTML content.
+ * Preserves HTML structure by walking the DOM and wrapping matching text in <mark> tags.
+ */
+export function highlightSearchMatches(html: string, query: string): string {
+  if (!query.trim()) return html;
+
+  const escapedQuery = query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(${escapedQuery})`, 'gi');
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<body>${html}</body>`, 'text/html');
+  const body = doc.body;
+
+  function walkTextNodes(node: Node): void {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || '';
+      if (!regex.test(text)) return;
+      regex.lastIndex = 0;
+
+      const fragment = doc.createDocumentFragment();
+      let lastIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = regex.exec(text)) !== null) {
+        // Text before match
+        if (match.index > lastIndex) {
+          fragment.appendChild(doc.createTextNode(text.slice(lastIndex, match.index)));
+        }
+        // Wrapped match
+        const mark = doc.createElement('mark');
+        mark.className = 'search-highlight';
+        mark.textContent = match[0];
+        fragment.appendChild(mark);
+        lastIndex = match.index + match[0].length;
+      }
+
+      // Remaining text
+      if (lastIndex < text.length) {
+        fragment.appendChild(doc.createTextNode(text.slice(lastIndex)));
+      }
+
+      node.parentNode?.replaceChild(fragment, node);
+    } else if (node.nodeType === Node.ELEMENT_NODE && !['SCRIPT', 'STYLE', 'MARK'].includes((node as Element).tagName)) {
+      // Don't recurse into existing mark elements
+      Array.from(node.childNodes).forEach(walkTextNodes);
+    }
+  }
+
+  Array.from(body.childNodes).forEach(walkTextNodes);
+  return body.innerHTML;
+}
+
 export function socketStatusLabel(status: SocketStatus) {
   const labels: Record<SocketStatus, string> = {
     connecting: 'Connecting',

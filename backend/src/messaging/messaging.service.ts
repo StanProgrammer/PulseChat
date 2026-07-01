@@ -572,6 +572,31 @@ export class MessagingService {
     return { ok: true };
   }
 
+  async searchMessages(currentUserId: string, conversationId: string, query: string) {
+    await this.ensureConversationMember(currentUserId, conversationId);
+
+    const trimmed = query.trim();
+
+    if (!trimmed) {
+      return { messages: [], totalCount: 0 };
+    }
+
+    const messages = await this.prisma.message.findMany({
+      where: {
+        conversationId,
+        content: { contains: trimmed, mode: 'insensitive' }
+      },
+      include: messageInclude,
+      orderBy: { createdAt: 'asc' },
+      take: 50
+    });
+
+    return {
+      messages: messages.map((message) => this.toMessage(message)),
+      totalCount: messages.length
+    };
+  }
+
   async getDirectConversationForUser(userId: string, conversationId: string) {
     await this.ensureConversationMember(userId, conversationId);
 

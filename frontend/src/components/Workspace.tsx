@@ -18,7 +18,8 @@ import {
   Terminal,
   Link,
   Smile,
-  Paperclip
+  Paperclip,
+  Search
 } from 'lucide-react';
 import {
   canPreviewInBrowser,
@@ -27,9 +28,10 @@ import {
   getFileDownloadUrl,
   uploadFile
 } from '../api/messaging';
-import type {
-  AttachmentInfo,
-  Teammate
+import {
+  searchConversationMessages,
+  type AttachmentInfo,
+  type Teammate
 } from '../api/messaging';
 import type { User } from '../types/auth';
 import Avatar from './workspace/Avatar';
@@ -49,6 +51,7 @@ import {
   escapeHtml,
   formatMessageTime,
   getInitials,
+  highlightSearchMatches,
   normalizeLinkUrl,
   prepareContentForEditing,
   sanitizeMessageHtml,
@@ -57,6 +60,7 @@ import {
 import type { PendingFile, RealtimeMessage, SocketStatus } from './workspace/types';
 import { useDirectMessaging } from './workspace/useDirectMessaging';
 import WorkspaceSidebar from './workspace/WorkspaceSidebar';
+import ConversationSearch, { type ConversationSearchHandle } from './workspace/ConversationSearch';
 import {
   loadRecentEmojis,
   MAX_RECENT_EMOJIS,
@@ -264,6 +268,18 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
 
   const [fileError, setFileError] = useState('');
 
+  // ── Search state ──
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [matchedMessageIds, setMatchedMessageIds] = useState<string[]>([]);
+  const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+  const [totalMatches, setTotalMatches] = useState(0);
+  const [isSearchingMessages, setIsSearchingMessages] = useState(false);
+  const [hasSearchedMessages, setHasSearchedMessages] = useState(false);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const searchDebounceRef = useRef<number | null>(null);
+  const conversationSearchRef = useRef<ConversationSearchHandle | null>(null);
+
   const handleFileSelect = useCallback((files: FileList | null) => {
     if (!files?.length) return;
 
@@ -398,6 +414,150 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     setThreadMessage(null);
   }, [activeConversation?.id]);
 
+  const openSearch = useCallback(() => {
+    if (!activeParticipant || !activeConversation?.id) return;
+    setIsSearchOpen(true);
+    window.requestAnimationFrame(() => conversationSearchRef.current?.focus());
+  }, [activeParticipant, activeConversation?.id]);
+
+  const closeSearch = useCallback(() => {
+    setIsSearchOpen(false);
+    setSearchQuery('');
+    setMatchedMessageIds([]);
+    setTotalMatches(0);
+    setActiveMatchIndex(0);
+    setIsSearchingMessages(false);
+    setHasSearchedMessages(false);
+
+  }, []);
+
+  // ── Search: close on conversation switch ──
+  useEffect(() => {
+    closeSearch();
+  }, [activeConversation?.id]);
+
+  // ── Search: debounced API call ──
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed || !activeConversation?.id || !isSearchOpen) {
+      if (!trimmed) {
+        setMatchedMessageIds([]);
+        setTotalMatches(0);
+        setActiveMatchIndex(0);
+        setHasSearchedMessages(false);
+        setIsSearchingMessages(false);
+      }
+      return;
+    }
+
+    // Cancel previous request
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+
+    searchDebounceRef.current = window.setTimeout(async () => {
+      setIsSearchingMessages(true);
+
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+
+      try {
+        const res = await searchConversationMessages(accessToken, activeConversation.id, trimmed, controller.signal);
+        if (!controller.signal.aborted) {
+          const ids = res.messages.map((m) => m.id);
+          setMatchedMessageIds(ids);
+          setTotalMatches(res.totalCount);
+          setActiveMatchIndex(res.totalCount > 0 ? 0 : -1);
+          setHasSearchedMessages(true);
+
+          // Scroll to first match
+          if (ids.length > 0) {
+            requestAnimationFrame(() => {
+              const el = document.querySelector(`[data-message-id="${CSS.escape(ids[0])}"]`);
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            });
+          }
+        }
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        if (!controller.signal.aborted) {
+          setMatchedMessageIds([]);
+          setTotalMatches(0);
+          setActiveMatchIndex(-1);
+          setHasSearchedMessages(true);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsSearchingMessages(false);
+        }
+      }
+    }, 280);
+
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+      if (searchAbortRef.current) searchAbortRef.current.abort();
+    };
+  }, [searchQuery, activeConversation?.id, isSearchOpen, accessToken]);
+
+  // ── Keyboard shortcuts ──
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      // Ctrl+F or Cmd+F → open search
+      if ((event.ctrlKey || event.metaKey) && event.key === 'f') {
+        if (activeParticipant && activeConversation?.id) {
+          event.preventDefault();
+          openSearch();
+        }
+        return;
+      }
+
+      // Escape → close search
+      if (event.key === 'Escape' && isSearchOpen) {
+        event.preventDefault();
+        closeSearch();
+      }
+    };
+
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [isSearchOpen, activeParticipant, activeConversation?.id, closeSearch, openSearch]);
+
+  // ── Search: navigate to match ──
+  const scrollToMatch = useCallback((index: number) => {
+    if (index < 0 || index >= matchedMessageIds.length) return;
+    const messageId = matchedMessageIds[index];
+    const el = document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+    if (!el) return;
+
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [matchedMessageIds]);
+
+  const navigateNext = useCallback(() => {
+    if (totalMatches === 0) return;
+    const next = activeMatchIndex >= totalMatches - 1 ? 0 : activeMatchIndex + 1;
+    setActiveMatchIndex(next);
+    requestAnimationFrame(() => scrollToMatch(next));
+  }, [totalMatches, activeMatchIndex, scrollToMatch]);
+
+  const navigatePrev = useCallback(() => {
+    if (totalMatches === 0) return;
+    const prev = activeMatchIndex <= 0 ? totalMatches - 1 : activeMatchIndex - 1;
+    setActiveMatchIndex(prev);
+    requestAnimationFrame(() => scrollToMatch(prev));
+  }, [totalMatches, activeMatchIndex, scrollToMatch]);
+
+
+
+  const handleSearchQueryChange = useCallback((newQuery: string) => {
+    setSearchQuery(newQuery);
+  }, []);
+
   const handleOpenThread = useCallback((message: RealtimeMessage) => {
     setThreadMessage(message);
   }, []);
@@ -439,7 +599,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
         <section className="flex h-dvh min-w-0 flex-col overflow-hidden">
           {/* Header */}
           <header className="workspace-header z-20 border-b border-[#d9dee4] bg-white/86 backdrop-blur-xl">
-            <div className="flex min-h-[52px] items-center justify-between gap-3 px-4 py-2 sm:px-6">
+            <div className="flex min-h-[50px] items-center justify-between gap-3 px-3 py-1.5 sm:px-4">
               <div className="flex min-w-0 items-center gap-2">
                 {!isDesktop && (
                   <button
@@ -466,33 +626,60 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
                   )}
                 </div>
               </div>
-              <Avatar initials={initials} size="sm" />
+              <div className="flex items-center gap-1.5">
+                {activeParticipant && activeConversation?.id && (
+                  <button
+                    aria-label="Search messages"
+                    className={`header-action ${isSearchOpen ? 'header-action-active' : ''}`}
+                    onClick={openSearch}
+                    title="Search messages (Ctrl+F)"
+                    type="button"
+                  >
+                    <Search size={16} />
+                  </button>
+                )}
+                <Avatar initials={initials} size="sm" />
+              </div>
             </div>
           </header>
 
           {/* Message area */}
           <div className="chat-main flex-1 min-h-0 overflow-hidden">
-            <div className="flex h-full min-h-0 flex-col px-3 pt-3 pb-0 sm:px-6 sm:pt-5">
-              {error && <p className="dm-error mb-3">{error}</p>}
-              {fileError && <p className="dm-error mb-3">{fileError}</p>}
+            <div className="flex h-full min-h-0 flex-col px-0 pt-0 pb-0">
+              {error && <p className="dm-error mx-2 mb-2 mt-2">{error}</p>}
+              {fileError && <p className="dm-error mx-2 mb-2 mt-2">{fileError}</p>}
 
-              {activeParticipant ? (
+              {activeParticipant && activeConversation?.id ? (
                 <div className="conversation-panel flex min-h-0 flex-1 flex-col overflow-hidden">
+                  <ConversationSearch
+                    ref={conversationSearchRef}
+                    isOpen={isSearchOpen}
+                    onClose={closeSearch}
+                    query={searchQuery}
+                    onQueryChange={handleSearchQueryChange}
+                    totalMatches={totalMatches}
+                    activeMatchIndex={activeMatchIndex}
+                    onNavigateNext={navigateNext}
+                    onNavigatePrev={navigatePrev}
+                    isSearching={isSearchingMessages}
+                    hasSearched={hasSearchedMessages}
+                  />
                   <MessageStream
                     key={activeParticipant.id}
                     messages={messages}
                     participant={activeParticipant}
                     user={user}
                     accessToken={accessToken}
-                    conversationId={activeConversation?.id}
+                    conversationId={activeConversation.id}
                     threadMessageId={threadMessage?.id ?? null}
                     threadReplyCounts={threadReplyCounts}
                     threadUnreadCounts={threadUnreadCounts}
                     onOpenThread={handleOpenThread}
                     onUpdateMessage={updateMessage}
                     onDeleteMessage={deleteMessage}
+                    searchQuery={isSearchOpen ? searchQuery : ''}
+                    activeSearchMessageId={isSearchOpen && activeMatchIndex >= 0 ? matchedMessageIds[activeMatchIndex] : undefined}
                     onMentionClick={(userId, userName) => {
-                      // Start a DM with the mentioned user
                       const teammate: Teammate = {
                         id: userId,
                         name: userName,
@@ -514,7 +701,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
 
           {/* Composer */}
           {activeParticipant && (
-            <div className="flex-shrink-0 px-3 pb-3 pt-2 sm:px-6">
+            <div className="flex-shrink-0 px-2 pb-2 pt-1 sm:px-2 sm:pb-2">
               <MessageComposer
                 accessToken={accessToken}
                 currentUserId={user.id}
@@ -576,7 +763,9 @@ function MessageStream({
   onOpenThread,
   onUpdateMessage,
   onDeleteMessage,
-  onMentionClick
+  onMentionClick,
+  searchQuery,
+  activeSearchMessageId
 }: {
   messages: RealtimeMessage[];
   participant: Teammate;
@@ -590,6 +779,8 @@ function MessageStream({
   onUpdateMessage: (messageId: string, content: string, conversationId: string) => void;
   onDeleteMessage: (messageId: string, conversationId: string) => void;
   onMentionClick?: (userId: string, userName: string) => void;
+  searchQuery?: string;
+  activeSearchMessageId?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const isInitialLoad = useRef(true);
@@ -905,7 +1096,8 @@ function MessageStream({
 
           return (
             <article
-              className={`message-card ${isOwn ? 'message-card-own' : ''} ${isEditing ? 'message-card-editing' : ''} ${menuOpen ? 'message-card-menu-open' : ''}`}
+              className={`message-card ${isOwn ? 'message-card-own' : ''} ${isEditing ? 'message-card-editing' : ''} ${menuOpen ? 'message-card-menu-open' : ''} ${activeSearchMessageId === message.id ? 'search-match-active' : ''}`}
+              data-message-id={message.id}
               key={message.id}
               style={{ animationDelay: `${index * 55}ms` }}
             >
@@ -1026,7 +1218,11 @@ function MessageStream({
                     {message.content && (
                       <div
                         className="message-content mt-0.5 text-[0.92rem] leading-6 text-[#343940]"
-                        dangerouslySetInnerHTML={{ __html: sanitizeMessageHtml(message.content) }}
+                        dangerouslySetInnerHTML={{
+                          __html: searchQuery
+                            ? highlightSearchMatches(sanitizeMessageHtml(message.content), searchQuery)
+                            : sanitizeMessageHtml(message.content)
+                        }}
                         onClick={(event) => {
                           const target = event.target;
                           if (
