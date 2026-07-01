@@ -148,6 +148,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     startConversation,
     updateMessage,
     deleteMessage,
+    toggleReaction,
     updateDraft
   } = useDirectMessaging(accessToken, user);
   const initials = getInitials(user.name);
@@ -677,6 +678,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
                     onOpenThread={handleOpenThread}
                     onUpdateMessage={updateMessage}
                     onDeleteMessage={deleteMessage}
+                    onToggleReaction={toggleReaction}
                     searchQuery={isSearchOpen ? searchQuery : ''}
                     activeSearchMessageId={isSearchOpen && activeMatchIndex >= 0 ? matchedMessageIds[activeMatchIndex] : undefined}
                     onMentionClick={(userId, userName) => {
@@ -763,6 +765,7 @@ function MessageStream({
   onOpenThread,
   onUpdateMessage,
   onDeleteMessage,
+  onToggleReaction,
   onMentionClick,
   searchQuery,
   activeSearchMessageId
@@ -778,6 +781,7 @@ function MessageStream({
   onOpenThread: (message: RealtimeMessage) => void;
   onUpdateMessage: (messageId: string, content: string, conversationId: string) => void;
   onDeleteMessage: (messageId: string, conversationId: string) => void;
+  onToggleReaction: (messageId: string, emoji: string) => void;
   onMentionClick?: (userId: string, userName: string) => void;
   searchQuery?: string;
   activeSearchMessageId?: string;
@@ -799,6 +803,8 @@ function MessageStream({
   });
   const editEditorInitializedRef = useRef(false);
   const [kebabMenuPosition, setKebabMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [reactionPicker, setReactionPicker] = useState<{ messageId: string; left: number; top: number } | null>(null);
+  const [reactionRecents, setReactionRecents] = useState<RecentEmoji[]>(() => loadRecentEmojis());
   const kebabMenuAlignRef = useRef<'left' | 'right'>('right');
 
   const scrollToBottom = useCallback((smooth: boolean) => {
@@ -1248,6 +1254,28 @@ function MessageStream({
                       </div>
                     )}
 
+                    {message.reactions?.length > 0 && (
+                      <div className="message-reactions" aria-label="Message reactions">
+                        {message.reactions.map((reaction) => {
+                          const isActive = reaction.users.some((reactor) => reactor.id === user.id);
+                          const names = reaction.users.map((reactor) => reactor.id === user.id ? 'You' : reactor.name);
+                          return (
+                            <button
+                              aria-label={`${reaction.emoji}, ${reaction.users.length} reactions; ${names.join(', ')}`}
+                              aria-pressed={isActive}
+                              className={`reaction-pill ${isActive ? 'reaction-pill-active' : ''}`}
+                              key={reaction.emoji}
+                              onClick={() => onToggleReaction(message.id, reaction.emoji)}
+                              type="button"
+                            >
+                              <span aria-hidden="true">{reaction.emoji}</span><span>{reaction.users.length}</span>
+                              <span className="reaction-tooltip" role="tooltip">{names.join(', ')}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
                     {/* Thread reply count indicator — prominent, always visible below message */}
                     {threadReplyCounts[message.id] > 0 && (
                       <button
@@ -1273,6 +1301,24 @@ function MessageStream({
 
               {/* Message actions (thread + kebab), visible on hover */}
               <div className="message-actions-group">
+                {!isEditing && (
+                  <button
+                    aria-label="Add reaction"
+                    className="message-thread-trigger message-reaction-trigger"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      const width = Math.min(352, window.innerWidth - 16);
+                      setReactionPicker({
+                        messageId: message.id,
+                        left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+                        top: Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - Math.min(470, window.innerHeight - 16)))
+                      });
+                    }}
+                    title="Add reaction"
+                    type="button"
+                  ><Smile size={16} /><span className="message-thread-label">React</span></button>
+                )}
                 {/* Reply in thread button — appears on hover for all messages */}
                 {!isEditing && (
                   <button
@@ -1337,6 +1383,27 @@ function MessageStream({
           <p>No messages yet.</p>
           <span>Send the first note to start the conversation.</span>
         </div>
+      )}
+
+      {reactionPicker && createPortal(
+        <EmojiPickerPopover
+          id={`reaction-picker-${reactionPicker.messageId}`}
+          onClose={() => setReactionPicker(null)}
+          onEmojiSelect={(emoji) => {
+            onToggleReaction(reactionPicker.messageId, emoji.native);
+            const next = updateRecentEmojis(reactionRecents, emoji);
+            setReactionRecents(next);
+            persistRecentEmojis(next);
+            setReactionPicker(null);
+          }}
+          onRecentEmojiSelect={(emoji) => {
+            onToggleReaction(reactionPicker.messageId, emoji.emoji);
+            setReactionPicker(null);
+          }}
+          recentEmojis={reactionRecents}
+          style={{ position: 'fixed', left: reactionPicker.left, top: reactionPicker.top, zIndex: 100 }}
+        />,
+        document.body
       )}
 
       {/* Portaled kebab menu — rendered at document body level to avoid clipping */}

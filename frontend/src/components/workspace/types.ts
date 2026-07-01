@@ -1,4 +1,4 @@
-import type { AttachmentInfo, DirectConversation, DirectMessage, ThreadReply } from '../../api/messaging';
+import type { AttachmentInfo, DirectConversation, DirectMessage, MessageReaction, ThreadReply } from '../../api/messaging';
 
 export type SocketStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -29,6 +29,7 @@ export type ServerToClientEvents = {
   'message:new': (payload: { conversationId: string; message: DirectMessage; clientMessageId?: string }) => void;
   'message:updated': (payload: { conversationId: string; message: DirectMessage }) => void;
   'message:deleted': (payload: { conversationId: string; messageId: string }) => void;
+  'message:reactions:updated': (payload: { conversationId: string; messageId: string; reactions: MessageReaction[] }) => void;
   'conversation:updated': (payload: { conversation: DirectConversation }) => void;
   'thread:reply:new': (payload: { reply: ThreadReply; replyCount: number }) => void;
   'thread:reply:deleted': (payload: { replyId: string; messageId: string; replyCount: number }) => void;
@@ -50,6 +51,7 @@ export type ClientToServerEvents = {
     payload: { messageId: string },
     callback?: (response: SocketAck & { messageId?: string }) => void
   ) => void;
+  'message:reaction:toggle': (payload: { messageId: string; emoji: string }, callback?: (response: SocketAck) => void) => void;
   'thread:reply': (
     payload: { messageId: string; content: string; conversationId?: string },
     callback?: (response: SocketAck & { replyId?: string }) => void

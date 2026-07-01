@@ -2347,6 +2347,7 @@ button:focus-visible {
 }
 
 .reaction-pill {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -2361,6 +2362,36 @@ button:focus-visible {
     border-color 160ms ease,
     background 160ms ease,
     color 160ms ease;
+}
+
+.message-reactions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.3rem; }
+
+.reaction-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 0.45rem);
+  z-index: 30;
+  width: max-content;
+  max-width: min(16rem, 80vw);
+  transform: translateX(-50%);
+  border-radius: 0.4rem;
+  background: #1d1c1d;
+  color: #fff;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.25;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease;
+}
+
+.reaction-pill:hover .reaction-tooltip,
+.reaction-pill:focus-visible .reaction-tooltip { opacity: 1; }
+
+@media (hover: none) {
+  .message-actions-group { opacity: 1; }
+  .message-thread-label { display: none; }
 }
 
 .reaction-pill:hover {

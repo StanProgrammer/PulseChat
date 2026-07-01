@@ -175,6 +175,19 @@ export class SocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('message:reaction:toggle')
+  async toggleMessageReaction(@ConnectedSocket() client: AuthenticatedSocket, @MessageBody() payload: { messageId?: string; emoji?: string }) {
+    const user = this.requireSocketUser(client);
+    if (!payload?.messageId || !payload?.emoji) return { ok: false, message: 'Message id and emoji are required.' };
+    try {
+      const result = await this.messagingService.toggleMessageReaction(user.sub, payload.messageId, payload.emoji);
+      this.server.to(this.conversationRoom(result.conversationId)).emit('message:reactions:updated', result);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : 'Unable to update reaction.' };
+    }
+  }
+
   /* ── Thread reply socket events ── */
 
   @SubscribeMessage('thread:reply')

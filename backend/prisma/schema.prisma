@@ -22,6 +22,7 @@ model User {
   conversationMembers ConversationMember[]
   threadReplies       ThreadReply[]
   threadReplyReads    ThreadReplyRead[]
+  messageReactions    MessageReaction[]
 
   @@index([workspaceName])
   @@index([workspaceName, name])
@@ -54,9 +55,24 @@ model Message {
   attachments    Attachment[]
   threadReplies  ThreadReply[]
   threadReplyReads ThreadReplyRead[]
+  reactions        MessageReaction[]
 
   @@index([conversationId, createdAt])
   @@index([senderId])
+}
+
+model MessageReaction {
+  id        String   @id @default(cuid())
+  emoji     String
+  createdAt DateTime @default(now())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId, emoji])
+  @@index([userId])
 }
 
 model Attachment {

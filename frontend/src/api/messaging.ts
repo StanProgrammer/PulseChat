@@ -45,7 +45,10 @@ export type DirectMessage = {
   attachments: AttachmentInfo[];
   conversationId?: string;
   threadReplyCount?: number;
+  reactions: MessageReaction[];
 };
+
+export type MessageReaction = { emoji: string; users: Teammate[] };
 
 export type ThreadReply = {
   id: string;

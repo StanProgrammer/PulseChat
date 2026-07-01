@@ -26,7 +26,11 @@ const userSummarySelect = {
 
 const messageInclude = {
   sender: { select: userSummarySelect },
-  attachments: { select: attachmentFields, orderBy: { createdAt: 'asc' as const } }
+  attachments: { select: attachmentFields, orderBy: { createdAt: 'asc' as const } },
+  reactions: {
+    select: { emoji: true, user: { select: userSummarySelect } },
+    orderBy: { createdAt: 'asc' as const }
+  }
 } satisfies Prisma.MessageInclude;
 
 const conversationInclude = {
@@ -332,6 +336,42 @@ export class MessagingService {
     });
 
     return members.map((member) => member.userId);
+  }
+
+  async toggleMessageReaction(currentUserId: string, messageId: string, emoji: string) {
+    const normalizedEmoji = emoji.trim();
+    if (!normalizedEmoji || normalizedEmoji.length > 32) {
+      throw new BadRequestException('Choose a valid emoji reaction.');
+    }
+
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { conversationId: true }
+    });
+    if (!message) throw new NotFoundException('Message could not be found.');
+    await this.ensureConversationMember(currentUserId, message.conversationId);
+
+    await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.messageReaction.findUnique({
+        where: { messageId_userId_emoji: { messageId, userId: currentUserId, emoji: normalizedEmoji } }
+      });
+      if (existing) await tx.messageReaction.delete({ where: { id: existing.id } });
+      else await tx.messageReaction.create({ data: { messageId, userId: currentUserId, emoji: normalizedEmoji } });
+    });
+
+    const reactions = await this.getMessageReactions(messageId);
+    return { messageId, conversationId: message.conversationId, reactions };
+  }
+
+  private async getMessageReactions(messageId: string) {
+    const rows = await this.prisma.messageReaction.findMany({
+      where: { messageId },
+      select: { emoji: true, user: { select: userSummarySelect } },
+      orderBy: { createdAt: 'asc' }
+    });
+    const grouped = new Map<string, typeof rows>();
+    for (const row of rows) grouped.set(row.emoji, [...(grouped.get(row.emoji) ?? []), row]);
+    return [...grouped].map(([emoji, entries]) => ({ emoji, users: entries.map((entry) => entry.user) }));
   }
 
   /* ── Thread replies ── */
@@ -691,8 +731,15 @@ export class MessagingService {
       updatedAt: message.updatedAt,
       sender: message.sender,
       attachments: message.attachments,
+      reactions: this.summarizeReactions(message.reactions),
       conversationId: message.conversationId
     };
+  }
+
+  private summarizeReactions(reactions: MessageWithAttachments['reactions']) {
+    const grouped = new Map<string, typeof reactions>();
+    for (const reaction of reactions) grouped.set(reaction.emoji, [...(grouped.get(reaction.emoji) ?? []), reaction]);
+    return [...grouped].map(([emoji, entries]) => ({ emoji, users: entries.map((entry) => entry.user) }));
   }
 
 }

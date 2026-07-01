@@ -67,6 +67,15 @@ export class MessagingController {
     return this.messagingService.deleteMessage(user.sub, messageId);
   }
 
+  @Post('messages/:messageId/reactions')
+  toggleMessageReaction(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('messageId') messageId: string,
+    @Body('emoji') emoji: string
+  ) {
+    return this.messagingService.toggleMessageReaction(user.sub, messageId, emoji || '');
+  }
+
   /* ── Thread replies ── */
 
   @Get('messages/:messageId/thread-replies')

@@ -88,6 +88,11 @@ export function useDirectMessaging(accessToken: string, user: User) {
         setMessages((current) => removeDeletedMessage(current, messageId));
       }
     });
+    socket.on('message:reactions:updated', ({ conversationId, messageId, reactions }) => {
+      if (conversationId === activeConversationIdRef.current) {
+        setMessages((current) => current.map((message) => message.id === messageId ? { ...message, reactions } : message));
+      }
+    });
     socket.on('conversation:updated', ({ conversation }) => {
       setConversations((current) => upsertConversation(current, conversation));
     });
@@ -307,7 +312,8 @@ export function useDirectMessaging(accessToken: string, user: User) {
         workspaceName: user.workspaceName
       },
       status: 'sending',
-      attachments: optimisticAttachments
+      attachments: optimisticAttachments,
+      reactions: []
     };
 
     setIsSending(true);
@@ -345,6 +351,17 @@ export function useDirectMessaging(accessToken: string, user: User) {
     });
   }, [activeConversation, draftHtml, draftText, socketStatus, user]);
 
+  const toggleReaction = useCallback((messageId: string, emoji: string) => {
+    const socket = socketRef.current;
+    if (!socket || socketStatus !== 'connected') {
+      setError('Realtime connection is offline. Reconnect before reacting.');
+      return;
+    }
+    socket.emit('message:reaction:toggle', { messageId, emoji }, (response) => {
+      if (!response?.ok) setError(response?.message || 'Unable to update this reaction.');
+    });
+  }, [socketStatus]);
+
   return {
     activeConversation,
     conversations,
@@ -365,6 +382,7 @@ export function useDirectMessaging(accessToken: string, user: User) {
     sendMessage,
     updateMessage,
     deleteMessage,
+    toggleReaction,
     updateDraft
   };
 }
