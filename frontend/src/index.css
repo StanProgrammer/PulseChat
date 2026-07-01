@@ -4023,6 +4023,137 @@ button:focus-visible {
   background: rgb(224 30 90 / 0.08);
 }
 
+.message-kebab-item-copied {
+  color: #007a5a;
+}
+
+.message-kebab-separator {
+  height: 1px;
+  margin: 0.2rem 0.35rem;
+  background: #e4e7ea;
+}
+
+/* ── Copy toast notification ── */
+
+.copy-toast {
+  position: fixed;
+  bottom: 1.25rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 0.65rem;
+  background: #1d1c1d;
+  color: #ffffff;
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 800;
+  box-shadow: 0 12px 32px rgb(23 25 28 / 0.24);
+  animation: toast-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+  max-width: calc(100vw - 2rem);
+}
+
+.copy-toast svg {
+  flex-shrink: 0;
+  color: #2eb67d;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 640px) {
+  .copy-toast {
+    bottom: 0.85rem;
+    font-size: 0.8rem;
+    padding: 0.5rem 0.85rem;
+  }
+}
+
+/* ── Message highlight for deep-linked messages ── */
+
+.message-card {
+  scroll-margin-top: 4rem;
+}
+
+.message-highlight {
+  animation: highlight-pulse 3.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  border-radius: 0.3rem;
+  position: relative;
+}
+
+@keyframes highlight-pulse {
+  0% {
+    background-color: rgb(255 213 0 / 0.3);
+    box-shadow: inset 3px 0 0 #ffb100;
+  }
+  20% {
+    background-color: rgb(255 213 0 / 0.22);
+  }
+  60% {
+    background-color: rgb(255 213 0 / 0.1);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 3px 0 0 transparent;
+  }
+}
+
+/* ── Navigation error banner ── */
+
+.nav-error {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0.5rem 0.75rem 0;
+  border: 1px solid rgb(224 30 90 / 0.22);
+  border-radius: 0.65rem;
+  background: rgb(224 30 90 / 0.06);
+  color: #9f1239;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.4;
+  animation: nav-error-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  flex-shrink: 0;
+}
+
+.nav-error svg {
+  flex-shrink: 0;
+  color: #e01e5a;
+}
+
+@keyframes nav-error-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 640px) {
+  .nav-error {
+    margin: 0.35rem 0.5rem 0;
+    font-size: 0.78rem;
+    padding: 0.5rem 0.65rem;
+  }
+}
+
 /* ── Edit mode ── */
 
 .message-card-editing {

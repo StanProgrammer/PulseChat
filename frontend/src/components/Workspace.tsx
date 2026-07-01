@@ -85,6 +85,9 @@ type WorkspaceProps = {
   accessToken: string;
   isLoading: boolean;
   onLogout: () => Promise<void>;
+  initialConversationId?: string;
+  targetMessageId?: string;
+  onNavigated?: () => void;
 };
 
 const TEXT_FORMAT_OPTIONS = [
@@ -127,7 +130,7 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
+function Workspace({ user, accessToken, isLoading, onLogout, initialConversationId, targetMessageId, onNavigated }: WorkspaceProps) {
   const {
     activeConversation,
     conversations,
@@ -567,6 +570,82 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
     setThreadMessage(null);
   }, []);
 
+  // ── Deep linking: navigate to target conversation ──
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
+  const messageFoundRef = useRef(false);
+  const highlightTimerRef = useRef<number | null>(null);
+
+  // Reset state when conversation changes
+  useEffect(() => {
+    if (activeConversation?.id) {
+      messageFoundRef.current = false;
+      setNavigationError(null);
+    }
+  }, [activeConversation?.id]);
+
+  // Switch to the target conversation when initialConversationId is provided
+  useEffect(() => {
+    if (initialConversationId && initialConversationId !== activeConversation?.id) {
+      setActiveConversationId(initialConversationId);
+    }
+  }, [initialConversationId, activeConversation?.id, setActiveConversationId]);
+
+  // After messages load, scroll to and highlight the target message.
+  // Re-runs when threadReplyCounts arrive to open the thread panel.
+  useEffect(() => {
+    if (!targetMessageId) return;
+    if (!activeConversation?.id || messages.length === 0) return;
+
+    const targetMsg = messages.find((m) => m.id === targetMessageId);
+    if (!targetMsg) {
+      // Only show error if we haven't already found the message
+      if (!messageFoundRef.current) {
+        setNavigationError('This message could not be found. It may have been deleted or you may no longer have access.');
+      }
+      messageFoundRef.current = false;
+      return;
+    }
+
+    // Clear any previous error since we found the message
+    if (messageFoundRef.current && navigationError) {
+      setNavigationError(null);
+    }
+
+    // First time finding this message — scroll and highlight
+    if (!messageFoundRef.current) {
+      const el = document.querySelector(`[data-message-id="${CSS.escape(targetMessageId)}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setHighlightedMessageId(targetMessageId);
+
+        // Auto-clear highlight after 3.5 seconds (fade animation is ~3s)
+        highlightTimerRef.current = window.setTimeout(() => {
+          setHighlightedMessageId(null);
+        }, 3800);
+
+        messageFoundRef.current = true;
+        onNavigated?.();
+      }
+    }
+
+    // Open thread if the message has replies — runs when threadReplyCounts arrives
+    const replyCount = threadReplyCounts[targetMessageId];
+    if (replyCount !== undefined && replyCount > 0 && messageFoundRef.current) {
+      // Only open thread if not already open for this message
+      if (threadMessage?.id !== targetMessageId) {
+        setThreadMessage(targetMsg);
+      }
+    }
+
+    return () => {
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = null;
+      }
+    };
+  }, [targetMessageId, messages, activeConversation?.id, threadReplyCounts, onNavigated, navigationError, threadMessage?.id]);
+
   return (
     <main className="workspace-shell min-h-dvh overflow-x-hidden bg-[#eef1f4] text-[#17191c]">
       {isSidebarOpen && !isDesktop && (
@@ -665,6 +744,16 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
                     isSearching={isSearchingMessages}
                     hasSearched={hasSearchedMessages}
                   />
+                  {/* Show navigation error if message link failed */}
+                  {navigationError && (
+                    <div className="nav-error">
+                      <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="8" cy="8" r="6" />
+                        <path d="M8 5v3m0 2v.01" />
+                      </svg>
+                      <span>{navigationError}</span>
+                    </div>
+                  )}
                   <MessageStream
                     key={activeParticipant.id}
                     messages={messages}
@@ -672,6 +761,7 @@ function Workspace({ user, accessToken, isLoading, onLogout }: WorkspaceProps) {
                     user={user}
                     accessToken={accessToken}
                     conversationId={activeConversation.id}
+                    highlightedMessageId={highlightedMessageId}
                     threadMessageId={threadMessage?.id ?? null}
                     threadReplyCounts={threadReplyCounts}
                     threadUnreadCounts={threadUnreadCounts}
@@ -759,6 +849,7 @@ function MessageStream({
   user,
   accessToken,
   conversationId,
+  highlightedMessageId,
   threadMessageId,
   threadReplyCounts,
   threadUnreadCounts,
@@ -775,6 +866,7 @@ function MessageStream({
   user: User;
   accessToken: string;
   conversationId?: string;
+  highlightedMessageId?: string | null;
   threadMessageId: string | null;
   threadReplyCounts: Record<string, number>;
   threadUnreadCounts: Record<string, number>;
@@ -806,6 +898,8 @@ function MessageStream({
   const [reactionPicker, setReactionPicker] = useState<{ messageId: string; left: number; top: number } | null>(null);
   const [reactionRecents, setReactionRecents] = useState<RecentEmoji[]>(() => loadRecentEmojis());
   const kebabMenuAlignRef = useRef<'left' | 'right'>('right');
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const scrollToBottom = useCallback((smooth: boolean) => {
     const el = scrollRef.current;
@@ -929,6 +1023,20 @@ function MessageStream({
     return () => document.removeEventListener('keydown', handleKey);
   }, [deleteConfirmId]);
 
+  // Clear copied feedback after timeout
+  useEffect(() => {
+    if (!copiedMessageId) return;
+    const timer = window.setTimeout(() => setCopiedMessageId(null), 2000);
+    return () => window.clearTimeout(timer);
+  }, [copiedMessageId]);
+
+  // Clear toast message after timeout
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = window.setTimeout(() => setToastMessage(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [toastMessage]);
+
   const startEditing = (message: RealtimeMessage) => {
     const prepared = prepareContentForEditing(message.content);
     setEditInitialContent(prepared);
@@ -1031,6 +1139,41 @@ function MessageStream({
     });
   };
 
+  const copyMessageContent = useCallback((message: RealtimeMessage) => {
+    const div = document.createElement('div');
+    div.innerHTML = sanitizeMessageHtml(message.content);
+    const text = div.textContent || '';
+    navigator.clipboard.writeText(text).catch(() => {
+      // Fallback for older browsers or insecure context
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    });
+    setCopiedMessageId(message.id);
+    setToastMessage('Message copied to clipboard');
+    setOpenMenuMessageId(null);
+    setKebabMenuPosition(null);
+  }, []);
+
+  const copyMessageLink = useCallback((message: RealtimeMessage) => {
+    const url = `${window.location.origin}?conv=${conversationId}&msg=${message.id}`;
+    navigator.clipboard.writeText(url).catch(() => {
+      const textarea = document.createElement('textarea');
+      textarea.value = url;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    });
+    setCopiedMessageId(message.id);
+    setToastMessage('Message link copied to clipboard');
+    setOpenMenuMessageId(null);
+    setKebabMenuPosition(null);
+  }, [conversationId]);
+
   const confirmDelete = (messageId: string) => {
     setDeleteConfirmId(messageId);
     setOpenMenuMessageId(null);
@@ -1102,7 +1245,7 @@ function MessageStream({
 
           return (
             <article
-              className={`message-card ${isOwn ? 'message-card-own' : ''} ${isEditing ? 'message-card-editing' : ''} ${menuOpen ? 'message-card-menu-open' : ''} ${activeSearchMessageId === message.id ? 'search-match-active' : ''}`}
+              className={`message-card ${isOwn ? 'message-card-own' : ''} ${isEditing ? 'message-card-editing' : ''} ${menuOpen ? 'message-card-menu-open' : ''} ${activeSearchMessageId === message.id ? 'search-match-active' : ''} ${highlightedMessageId === message.id ? 'message-highlight' : ''}`}
               data-message-id={message.id}
               key={message.id}
               style={{ animationDelay: `${index * 55}ms` }}
@@ -1338,8 +1481,8 @@ function MessageStream({
                   </button>
                 )}
 
-                {/* Kebab menu for own messages (not while editing) */}
-                {isOwn && !isEditing && (
+                {/* Kebab menu for all messages (not while editing) */}
+                {!isEditing && (
                   <button
                     aria-label="Message actions"
                     className={`message-kebab-trigger ${menuOpen ? 'message-kebab-trigger-open' : ''}`}
@@ -1350,7 +1493,7 @@ function MessageStream({
                         setKebabMenuPosition(null);
                       } else {
                         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                        const menuWidth = 152; // ~9.5rem
+                        const menuWidth = 170; // wider menu with copy options
                         let left = rect.right - menuWidth;
                         let align: 'left' | 'right' = 'right';
                         if (left < 8) {
@@ -1406,10 +1549,24 @@ function MessageStream({
         document.body
       )}
 
+      {/* Toast notification for copy actions */}
+      {toastMessage && createPortal(
+        <div className="copy-toast" role="status" aria-live="polite">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 8l3.5 3.5L13 5" />
+          </svg>
+          {toastMessage}
+        </div>,
+        document.body
+      )}
+
       {/* Portaled kebab menu — rendered at document body level to avoid clipping */}
       {openMenuMessageId && kebabMenuPosition && (() => {
         const message = messages.find((m) => m.id === openMenuMessageId);
         if (!message) return null;
+        const isOwnMessage = message.sender.id === user.id;
+        const wasCopied = copiedMessageId === message.id;
+        const copyLabel = wasCopied ? 'Copied!' : 'Copy message';
         return createPortal(
           <div
             className={`message-kebab-menu ${kebabMenuAlignRef.current === 'left' ? 'message-kebab-menu-left' : ''}`}
@@ -1421,25 +1578,52 @@ function MessageStream({
             }}
           >
             <button
-              className="message-kebab-item"
-              onClick={() => startEditing(message)}
+              className={`message-kebab-item ${wasCopied ? 'message-kebab-item-copied' : ''}`}
+              onClick={() => copyMessageContent(message)}
               type="button"
             >
               <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11 2l3 3-9 9H2v-3z" />
+                <rect x="3" y="2" width="10" height="12" rx="1" />
+                <path d="M6 2V1a1 1 0 011-1h2a1 1 0 011 1v1" />
               </svg>
-              Edit message
+              {copyLabel}
             </button>
             <button
-              className="message-kebab-item message-kebab-item-danger"
-              onClick={() => confirmDelete(message.id)}
+              className={`message-kebab-item ${wasCopied ? 'message-kebab-item-copied' : ''}`}
+              onClick={() => copyMessageLink(message)}
               type="button"
             >
               <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 4h12m-2 0l-.7 8.4a2 2 0 01-2 1.6H6.7a2 2 0 01-2-1.6L4 4m2 0V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5V4" />
+                <path d="M7 8.5a3.5 3.5 0 005.2.5l2-2a3.5 3.5 0 00-5-5l-1.5 1.5" />
+                <path d="M9 7.5a3.5 3.5 0 00-5.2-.5l-2 2a3.5 3.5 0 005 5l1.5-1.5" />
               </svg>
-              Delete message
+              {wasCopied ? 'Link copied!' : 'Copy message link'}
             </button>
+            {isOwnMessage && (
+              <>
+                <div className="message-kebab-separator" />
+                <button
+                  className="message-kebab-item"
+                  onClick={() => startEditing(message)}
+                  type="button"
+                >
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M11 2l3 3-9 9H2v-3z" />
+                  </svg>
+                  Edit message
+                </button>
+                <button
+                  className="message-kebab-item message-kebab-item-danger"
+                  onClick={() => confirmDelete(message.id)}
+                  type="button"
+                >
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2 4h12m-2 0l-.7 8.4a2 2 0 01-2 1.6H6.7a2 2 0 01-2-1.6L4 4m2 0V2.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5V4" />
+                  </svg>
+                  Delete message
+                </button>
+              </>
+            )}
           </div>,
           document.body
         );

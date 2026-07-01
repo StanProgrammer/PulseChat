@@ -114,6 +114,11 @@ export class MessagingController {
     return this.messagingService.markThreadRead(user.sub, messageId);
   }
 
+  @Get('messages/:messageId')
+  getMessage(@CurrentUser() user: AuthenticatedUser, @Param('messageId') messageId: string) {
+    return this.messagingService.getMessage(user.sub, messageId);
+  }
+
   @Get('messages/:messageId/thread-reply-count')
   getThreadReplyCount(@Param('messageId') messageId: string) {
     return this.messagingService.getThreadReplyCount(messageId);

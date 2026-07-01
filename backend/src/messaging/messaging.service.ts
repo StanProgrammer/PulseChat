@@ -637,6 +637,31 @@ export class MessagingService {
     };
   }
 
+  async getMessage(currentUserId: string, messageId: string) {
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      include: messageInclude
+    });
+
+    if (!message) {
+      throw new NotFoundException('This message could not be found.');
+    }
+
+    await this.ensureConversationMember(currentUserId, message.conversationId);
+
+    const replyCount = await this.prisma.threadReply.count({
+      where: { messageId }
+    });
+
+    return {
+      message: {
+        ...this.toMessage(message),
+        threadReplyCount: replyCount
+      },
+      conversationId: message.conversationId
+    };
+  }
+
   async getDirectConversationForUser(userId: string, conversationId: string) {
     await this.ensureConversationMember(userId, conversationId);
 

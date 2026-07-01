@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   clearStoredAccessToken,
   getProfile,
@@ -23,6 +23,12 @@ function App() {
   const [success, setSuccess] = useState('');
   const [accessToken, setAccessToken] = useState(getStoredAccessToken);
   const [user, setUser] = useState<User | null>(null);
+
+  // Parse deep-link params from URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const targetConversationId = urlParams.get('conv') || undefined;
+  const targetMessageId = urlParams.get('msg') || undefined;
+  const showDeepLink = !!(targetConversationId && targetMessageId);
 
   useEffect(() => {
     let isMounted = true;
@@ -140,8 +146,32 @@ function App() {
     setSuccess('');
   };
 
+  // Clear deep-link params from URL after capturing them
+  // so they don't interfere with subsequent navigation
+  const cleanupDeepLink = useCallback(() => {
+    if (!showDeepLink) return;
+    const params = new URLSearchParams(window.location.search);
+    params.delete('conv');
+    params.delete('msg');
+    const newSearch = params.toString();
+    const newUrl = newSearch
+      ? `${window.location.pathname}?${newSearch}`
+      : window.location.pathname;
+    window.history.replaceState({}, document.title, newUrl);
+  }, [showDeepLink]);
+
   if (user) {
-    return <Workspace accessToken={accessToken} isLoading={isLoading} onLogout={handleLogout} user={user} />;
+    return (
+      <Workspace
+        accessToken={accessToken}
+        initialConversationId={targetConversationId}
+        isLoading={isLoading}
+        onLogout={handleLogout}
+        onNavigated={() => { cleanupDeepLink(); }}
+        targetMessageId={targetMessageId}
+        user={user}
+      />
+    );
   }
 
   return (
